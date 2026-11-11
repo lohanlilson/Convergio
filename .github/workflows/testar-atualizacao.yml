@@ -1,42 +1,53 @@
-# Reproduz a atualização automática no Windows: 1.0.1 instalada -> instalador 1.1.0 publicado.
+# Testa a atualização no Windows: versão publicada instalada -> instalador gerado deste código (9.9.9),
+# com o programa ainda aberto (o caso que falhava) e pelo ajudante, como o botão "Atualizar agora" faz.
 name: Testar atualização
 
 on:
   push:
     branches: [main]
-    paths: [".github/workflows/testar-atualizacao.yml"]
+    paths: [".github/workflows/testar-atualizacao.yml", "installer/**", "convergio/atualizador.py"]
 
 jobs:
-  par:
+  atualizar:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        cenario: ["tudo-fechado", "ajudante-vivo", "programa-vivo"]
+        antiga: ["1.0.1", "1.1.0"]
     steps:
-      - name: Instalar 1.0.1 e baixar o instalador 1.1.0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Gerar instalador 9.9.9 deste código
+        shell: bash
+        run: |
+          sed -i 's/__version__ = ".*"/__version__ = "9.9.9"/' convergio/__init__.py
+          python -m pip install -q -r requirements.txt pyinstaller
+          if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup -y --no-progress; fi
+          python build.py > build.log 2>&1 || (tail -40 build.log; exit 1)
+      - name: Instalar ${{ matrix.antiga }}, deixar aberto e atualizar pelo ajudante
         shell: pwsh
         run: |
-          Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v1.0.1/Convergio-Setup-1.0.1.exe" -OutFile antiga.exe
-          Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v1.1.0/Convergio-Setup-1.1.0.exe" -OutFile nova.exe
+          $v = "${{ matrix.antiga }}"
+          Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v$v/Convergio-Setup-$v.exe" -OutFile antiga.exe
           $p = Start-Process .\antiga.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru; $p.WaitForExit()
           Start-Sleep 5; Get-Process Convergio -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
-      - name: Atualizar (${{ matrix.cenario }})
-        shell: pwsh
-        run: |
           $exe = "C:\Program Files\Convergio\Convergio.exe"
-          if ("${{ matrix.cenario }}" -eq "ajudante-vivo") {
-            # o ajudante (Convergio.exe --run-update) ainda aberto, esperando um processo que não fecha
-            $espera = Start-Process powershell -ArgumentList "-Command","Start-Sleep 300" -PassThru
-            Start-Process $exe -ArgumentList "--run-update","C:\nao-existe.exe",$espera.Id; Start-Sleep 6
+          $novo = (Resolve-Path "Saida\Convergio-Setup-9.9.9.exe").Path
+          $app = Start-Process $exe -PassThru; Start-Sleep 8
+          # ajudante esperando um programa que NÃO fecha (pior caso): depois de 30 s ele inicia o instalador
+          Start-Process $exe -ArgumentList "--run-update", "`"$novo`"", $app.Id
+          $t = Get-Date
+          while (((Get-Date) - $t).TotalSeconds -lt 150) {
+            Start-Sleep 3
+            $lista = Get-Process | Where-Object { $_.ProcessName -match "Convergio" } | ForEach-Object { "$($_.ProcessName)#$($_.Id)" }
+            Write-Host ("{0,4}s  {1}" -f [int]((Get-Date) - $t).TotalSeconds, ($lista -join "  "))
+            if (((Get-Date) - $t).TotalSeconds -gt 45 -and -not ($lista -match "Setup")) { break }
           }
-          if ("${{ matrix.cenario }}" -eq "programa-vivo") { Start-Process $exe; Start-Sleep 8 }
-          Get-Process Convergio -ErrorAction SilentlyContinue | Format-Table Id, Path -AutoSize
-          $log = "$env:TEMP\convergio-setup.log"
-          $p = Start-Process .\nova.exe -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS',"/LOG=`"$log`"" -PassThru
-          $p.WaitForExit()
-          Write-Host "Código de saída do instalador: $($p.ExitCode)"
           $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{3680703B-A357-4D95-B063-9D9D747F6B6F}_is1"
-          Write-Host "=== Versão instalada no fim: $((Get-ItemProperty $key).DisplayVersion)"
-          Get-Content $log | Select-String -Pattern "rror|ollback|in use|Restart|Mutex|running|Abort|Fail|succeeded|Deleting|DeleteFile|Rolling|Message box" | Select-Object -First 60
+          $ver = (Get-ItemProperty $key).DisplayVersion
+          Write-Host "=== Versão instalada no fim: $ver"
+          $logs = @("$env:TEMP\Convergio-instalacao.log") + (Get-ChildItem "$env:TEMP\Setup Log*" -ErrorAction SilentlyContinue | ForEach-Object FullName)
+          foreach ($l in $logs) { if (Test-Path $l) { Write-Host "--- $l"; Get-Content $l | Select-String "rror|Abort|ollback|succeeded|Message box|Restart" | Select-Object -First 25 } }
+          if ($ver -ne "9.9.9") { Write-Error "A atualização não foi aplicada"; exit 1 }

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import APP_NAME, AUTHOR, COPYRIGHT, EMAIL, __version__, resource, tema
-from .atualizador import Atualizador
+from .atualizador import Atualizador, avisar_falha, resultado_da_ultima_atualizacao
 from .integracao import Servidor
 from .motor import BAIXANDO, CONCLUIDO, CONECTANDO, ERRO, NA_FILA, PAUSADO, Download, fmt_bytes, fmt_tempo
 
@@ -350,6 +350,7 @@ class Janela(QMainWindow):
         self.carregar_lista()
         self.atualizador = Atualizador(self)
         QTimer.singleShot(1500, self._apresentar_integracao)
+        QTimer.singleShot(800, self._conferir_atualizacao_anterior)
         QTimer.singleShot(3000, self.atualizador.verificar_auto)
 
     # ------------------------------------------------------------ menus
@@ -816,3 +817,9 @@ class Janela(QMainWindow):
         if self.settings.value("integracao_apresentada", "") != "1":
             self.settings.setValue("integracao_apresentada", "1")
             DialogoIntegracao(self).exec()
+
+    def _conferir_atualizacao_anterior(self):
+        info = resultado_da_ultima_atualizacao()
+        if info:
+            self.mostrar_janela()
+            avisar_falha(self, info)

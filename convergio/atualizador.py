@@ -19,7 +19,9 @@ from . import APP_NAME, UPDATE_REPO, __version__
 from .motor import CONCLUIDO, ERRO, Download, fmt_bytes
 
 URL_VERSAO = f"https://github.com/{UPDATE_REPO}/releases/latest/download/versao.json"
-ARGS_INSTALADOR = ["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"]
+LOG_INSTALACAO = os.path.join(tempfile.gettempdir(), "Convergio-instalacao.log")
+MARCADOR = os.path.join(tempfile.gettempdir(), "Convergio-atualizacao.json")
+ARGS_INSTALADOR = ["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", f"/LOG={LOG_INSTALACAO}"]
 
 
 def vtuple(v):
@@ -50,8 +52,13 @@ def sha256(caminho):
     return h.hexdigest()
 
 
-def executar_instalador(caminho):
+def executar_instalador(caminho, versao_alvo=""):
     """Agenda o instalador para depois que o programa fechar (ele reabre o programa ao terminar)."""
+    try:
+        with open(MARCADOR, "w", encoding="utf-8") as f:
+            json.dump({"de": __version__, "para": versao_alvo, "instalador": caminho, "quando": time.time()}, f)
+    except OSError:
+        pass
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         subprocess.Popen([caminho] + ARGS_INSTALADOR)
         return
@@ -66,13 +73,70 @@ def ajudante_atualizacao(argv):
     pid = int(argv[i + 2]) if len(argv) > i + 2 else 0
     if sys.platform == "win32" and pid:
         import ctypes
-        h = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        from ctypes import wintypes
+        k = ctypes.windll.kernel32
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+        h = k.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
         if h:
-            ctypes.windll.kernel32.WaitForSingleObject(h, 60000)
-            ctypes.windll.kernel32.CloseHandle(h)
-    time.sleep(0.5)
+            k.WaitForSingleObject(h, 30000)
+            k.CloseHandle(h)
+    time.sleep(1.0)
+    # o instalador encerra qualquer Convergio que ainda estiver aberto antes de copiar os arquivos
     subprocess.Popen([caminho] + ARGS_INSTALADOR, close_fds=True)
     return 0
+
+
+def resultado_da_ultima_atualizacao():
+    """Depois de reabrir: None (nada pendente/sucesso) ou dict com a tentativa que falhou."""
+    try:
+        with open(MARCADOR, encoding="utf-8") as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return None
+    try:
+        os.remove(MARCADOR)
+    except OSError:
+        pass
+    if not info.get("para") or vtuple(__version__) >= vtuple(info["para"]):
+        return None
+    linhas = []
+    try:
+        with open(LOG_INSTALACAO, encoding="utf-8", errors="replace") as f:
+            linhas = [l.rstrip() for l in f if re.search(r"rror|failed|denied|negado|Abort|ollback|in use|Message box", l)]
+    except OSError:
+        pass
+    info["erros"] = linhas[-8:]
+    return info
+
+
+def avisar_falha(janela, info):
+    """Mostra o motivo e oferece a instalação normal (com janelas), que mostra o erro na tela."""
+    detalhes = "\n".join(e.split("   ", 1)[-1] for e in info.get("erros", [])) or "O instalador não informou o motivo."
+    caixa = QMessageBox(janela)
+    caixa.setIcon(QMessageBox.Warning)
+    caixa.setWindowTitle(APP_NAME)
+    caixa.setText(f"<b>A atualização para a versão {info['para']} não foi concluída.</b>")
+    caixa.setInformativeText(
+        "O Windows desfez a instalação. A causa mais comum é o antivírus bloquear o novo arquivo do programa.\n\n"
+        "Clique em \"Instalar manualmente\" para abrir o instalador normal, que mostra o erro na tela. "
+        "Se o antivírus avisar, permita o Convergio.")
+    caixa.setDetailedText(f"{detalhes}\n\nLog completo: {LOG_INSTALACAO}")
+    manual = caixa.addButton("Instalar manualmente", QMessageBox.AcceptRole)
+    caixa.addButton("Agora não", QMessageBox.RejectRole)
+    caixa.exec()
+    if caixa.clickedButton() is manual:
+        instalador = info.get("instalador", "")
+        if instalador and os.path.exists(instalador):
+            janela.fechar_para_atualizar()
+            subprocess.Popen([instalador, f"/LOG={LOG_INSTALACAO}"], close_fds=True)
+            QApplication.instance().quit()
+        else:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl(f"https://github.com/{UPDATE_REPO}/releases/latest/download/Convergio-Setup.exe"))
 
 
 class DialogoAtualizacao(QDialog):
@@ -149,7 +213,7 @@ class DialogoAtualizacao(QDialog):
                 return
             self.accept()
             self.janela.fechar_para_atualizar()
-            executar_instalador(d.caminho)
+            executar_instalador(d.caminho, self.info["versao"])
             QApplication.instance().quit()
 
     def _falhou(self, erro):

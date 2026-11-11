@@ -46,7 +46,6 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 CloseApplications=force
 RestartApplications=no
-AppMutex=Convergio_Running
 MinVersion=10.0
 SetupLogging=yes
 
@@ -92,3 +91,22 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#AppExe} /F"; Flags: runhidden
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\extensao"
+
+[Code]
+// Encerra o Convergio (janela, bandeja ou ajudante de atualização) antes de copiar os arquivos.
+// Primeiro pede para fechar; se não fechar em alguns segundos, força.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Codigo, I: Integer;
+begin
+  Result := '';
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM Convergio.exe', '', SW_HIDE, ewWaitUntilTerminated, Codigo);
+  for I := 1 to 10 do
+  begin
+    Sleep(500);
+    Exec(ExpandConstant('{sys}\tasklist.exe'), '/FI "IMAGENAME eq Convergio.exe" /NH /FO CSV', '', SW_HIDE,
+         ewWaitUntilTerminated, Codigo);
+  end;
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM Convergio.exe', '', SW_HIDE, ewWaitUntilTerminated, Codigo);
+  Sleep(800);
+end;
