@@ -118,6 +118,13 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   return true;   // vamos responder depois (assíncrono)
 });
 
+// avisa o Convergio de que este navegador está vinculado (a cada minuto e ao abrir)
+chrome.alarms.create("convergio-ping", { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === "convergio-ping") chamar("/ping"); });
+chrome.runtime.onStartup.addListener(() => chamar("/ping"));
+chrome.runtime.onInstalled.addListener(() => chamar("/ping"));
+chamar("/ping");
+
 // botão direito num link: "Baixar com o Convergio"
 function criarMenus() {
   chrome.contextMenus.removeAll(() => {

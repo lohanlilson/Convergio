@@ -199,6 +199,32 @@ def executar(argv):
         ok = bool(d) and d.headers.get("Cookie") == "sessao=1" and d.nome == "arquivo.zip"
         falhas += not ok
         log(f"{'OK ' if ok else 'ERRO'} download do navegador entra na fila com os cookies")
+        # recursos da 1.2: pastas por tipo, limite, vários links, configurações, navegadores
+        from .motor import LIMITADOR, categoria_do_arquivo
+        from .recursos import DialogoConfiguracoes, DialogoVariosLinks, navegadores_instalados
+        ok = categoria_do_arquivo("filme.MKV") == "Vídeos" and categoria_do_arquivo("x.zip") == "Compactados" \
+            and categoria_do_arquivo("x.xyz") == ""
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} pastas por tipo")
+        j.settings.setValue("limite_kb", 500)
+        j.aplicar_limite(True)
+        ok = LIMITADOR.limite == 500 * 1024
+        j.aplicar_limite(False)
+        ok = ok and LIMITADOR.limite == 0
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} limite de velocidade liga e desliga")
+        ok = DialogoVariosLinks(j, "a https://a.com/1.zip b https://b.com/2.rar").links() == \
+            ["https://a.com/1.zip", "https://b.com/2.rar"]
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} vários links")
+        navs = navegadores_instalados()
+        cfg = DialogoConfiguracoes(j, DialogoConfiguracoes.ABA_NAVEGADORES)
+        cfg.show()
+        app.processEvents()
+        cfg.close()
+        log(f"OK  configurações abrem; navegadores encontrados: {', '.join(n['nome'] for n in navs) or 'nenhum'}")
+        j.settings.remove("limite_kb")
+        j.settings.remove("limite_ativo")
         j.settings.remove("perguntar_navegador")
         for x in j.downloads:
             x.pausar()

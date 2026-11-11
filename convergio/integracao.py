@@ -39,7 +39,8 @@ class Servidor(QObject):
         self.ultimo_contato_extensao = 0.0
         self.navegador = ""
         self.capturar = True
-        self.versao_extensao = ""   # versão da extensão que falou com o programa (vazia nas antigas)        # a extensão consulta isto antes de capturar cada download
+        self.versao_extensao = ""   # versão da extensão que falou com o programa (vazia nas antigas)
+        self.contatos: dict[str, tuple[float, str]] = {}    # navegador -> (último contato, versão da extensão)        # a extensão consulta isto antes de capturar cada download
         self._srv: ThreadingHTTPServer | None = None
 
     @property
@@ -76,6 +77,8 @@ class Servidor(QObject):
                     dono.ultimo_contato_extensao = time.time()
                     dono.navegador = self.headers.get("X-Convergio-Navegador", "") or dono.navegador
                     dono.versao_extensao = self.headers.get("X-Convergio-Extensao", "") or "antiga"
+                    if dono.navegador:
+                        dono.contatos[dono.navegador] = (time.time(), dono.versao_extensao)
 
             def do_OPTIONS(self):
                 self._responder(403, {"erro": "não permitido"})

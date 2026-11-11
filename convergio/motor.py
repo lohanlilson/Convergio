@@ -83,6 +83,49 @@ def nome_seguro(nome: str | None, tipo: str = "") -> str:
     return (base or "download") + ext
 
 
+CATEGORIAS = {
+    "Vídeos": "mp4 mkv avi mov wmv flv webm m4v mpg mpeg ts 3gp",
+    "Músicas": "mp3 flac wav aac ogg m4a wma opus",
+    "Documentos": "pdf doc docx xls xlsx ppt pptx txt csv odt ods epub rtf xml",
+    "Compactados": "zip rar 7z tar gz bz2 xz iso img tgz",
+    "Programas": "exe msi apk bat dmg deb rpm appx msix",
+    "Imagens": "jpg jpeg png gif bmp webp svg tif tiff heic ico psd",
+}
+_EXT_CATEGORIA = {e: c for c, exts in CATEGORIAS.items() for e in exts.split()}
+
+
+def categoria_do_arquivo(nome: str | None) -> str:
+    """Nome da subpasta para o tipo do arquivo ("" quando o tipo não é conhecido)."""
+    return _EXT_CATEGORIA.get(os.path.splitext(nome or "")[1].lstrip(".").lower(), "")
+
+
+class Limitador:
+    """Limite de velocidade global (bytes por segundo), dividido entre todas as conexões. 0 = sem limite."""
+
+    def __init__(self):
+        self.limite = 0
+        self._lock = threading.Lock()
+        self._livre_em = 0.0          # instante em que a próxima leitura pode acontecer
+
+    def consumir(self, n: int, parar: threading.Event | None = None):
+        limite = self.limite
+        if limite <= 0 or n <= 0:
+            return
+        with self._lock:
+            agora = time.monotonic()
+            inicio = max(agora, self._livre_em)
+            self._livre_em = inicio + n / limite
+            espera = inicio - agora
+        if espera > 0:
+            if parar is not None:
+                parar.wait(min(espera, 5))
+            else:
+                time.sleep(min(espera, 5))
+
+
+LIMITADOR = Limitador()
+
+
 class Segmento:
     __slots__ = ("start", "end", "pos", "ativo")
 
@@ -103,7 +146,7 @@ class Segmento:
 
 class Download:
     def __init__(self, url: str, pasta: str, conexoes: int = 16,
-                 nome: str | None = None, headers: dict | None = None):
+                 nome: str | None = None, headers: dict | None = None, por_tipo: bool = False):
         self.url = url.strip()
         self.url_final = self.url
         self.pasta = pasta
@@ -111,6 +154,8 @@ class Download:
         self.nome = nome_seguro(nome) if nome else None
         self.headers_extra = {k: v for k, v in (headers or {}).items() if v}   # cookies, referer… do navegador
         self.headers = {"User-Agent": UA, **self.headers_extra, "Accept-Encoding": "identity"}
+        self.por_tipo = por_tipo          # salvar numa subpasta conforme o tipo (decidido ao descobrir o nome)
+        self.concluido_em = 0.0           # quando terminou (time.time())
         self.caminho: str | None = None
         self.tamanho: int | None = None
         self.aceita_range = False
@@ -141,6 +186,15 @@ class Download:
         self._parar.set()
         if not self.rodando and self.status in (NA_FILA, ERRO):
             self.status = PAUSADO
+
+    def trocar_link(self, url: str, headers: dict | None = None):
+        """Novo endereço para o mesmo arquivo (link expirado). O que já foi baixado é mantido."""
+        self.url = self.url_final = url.strip()
+        novos = {k: v for k, v in (headers or {}).items() if v}
+        self.headers_extra.update(novos)
+        self.headers.update(novos)
+        self.headers["Accept-Encoding"] = "identity"
+        self.erro = ""
 
     def aguardar(self, timeout: float | None = None):
         if self._thread:
@@ -244,7 +298,7 @@ class Download:
                 d = json.load(f)
         except (OSError, ValueError):
             return False
-        if d.get("url") != self.url or d.get("tamanho") != self.tamanho:
+        if d.get("tamanho") != self.tamanho:      # o link pode ter sido renovado; o tamanho tem que bater
             return False
         self.segmentos = [Segmento(a, b, p) for a, b, p in d["segmentos"]]
         self.baixado = sum(s.pos - s.start for s in self.segmentos)
@@ -333,9 +387,11 @@ class Download:
                         r.raise_for_status()
                         if self.aceita_range and r.status_code != 206:
                             raise IOError("o servidor ignorou o pedido de trecho (Range)")
-                        for chunk in r.raw.stream(CHUNK, decode_content=False):
+                        bloco = CHUNK if LIMITADOR.limite <= 0 else max(8192, min(CHUNK, LIMITADOR.limite // 20))
+                        for chunk in r.raw.stream(bloco, decode_content=False):
                             if self._parar.is_set():
                                 return False
+                            LIMITADOR.consumir(len(chunk), self._parar)
                             with self.lock:
                                 n = min(len(chunk), seg.end - seg.pos + 1)
                                 at = seg.pos
@@ -363,8 +419,9 @@ class Download:
                             self.baixado -= seg.pos - seg.start
                             seg.pos = seg.start
                     tentativas += 1
-                    if tentativas > MAX_TENTATIVAS:
-                        self.erro = str(e)
+                    recusado = isinstance(e, requests.HTTPError) and str(e) in ("HTTP 403", "HTTP 404", "HTTP 410")
+                    if tentativas > (3 if recusado else MAX_TENTATIVAS):
+                        self.erro = "o link expirou ou foi recusado pelo servidor — use Atualizar link" if recusado else str(e)
                         return False
                     if tentativas >= 3:
                         self.url_final = self.url                   # link assinado pode ter expirado
@@ -375,7 +432,15 @@ class Download:
         try:
             if not self.segmentos or not self.aceita_range:
                 antigo = self.caminho
+                tamanho_antes = self.tamanho if self.segmentos else None
                 self._sondar()
+                if tamanho_antes and self.tamanho != tamanho_antes:
+                    raise IOError("o link novo é de um arquivo diferente (tamanho não confere)")
+                if self.por_tipo and not antigo:
+                    sub = categoria_do_arquivo(self.nome)
+                    if sub:
+                        self.pasta = os.path.join(self.pasta, sub)
+                    self.por_tipo = False
                 os.makedirs(self.pasta, exist_ok=True)
                 # reaproveita o caminho anterior só se o nome não mudou (ex.: nome longo demais foi corrigido)
                 if antigo and os.path.basename(antigo) == self.nome:
@@ -423,6 +488,7 @@ class Download:
                 os.replace(self._part, self.caminho)
                 if os.path.exists(self._meta):
                     os.remove(self._meta)
+                self.concluido_em = time.time()
                 self.status = CONCLUIDO
             elif self._parar.is_set():
                 self._salvar_estado()

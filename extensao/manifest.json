@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "Convergio — downloads acelerados",
   "short_name": "Convergio",
-  "version": "1.1.5",
+  "version": "1.2.0",
   "description": "Envia os downloads do navegador para o Convergio, o acelerador de downloads.",
-  "permissions": ["downloads", "cookies", "contextMenus", "storage", "notifications"],
+  "permissions": ["downloads", "cookies", "contextMenus", "storage", "notifications", "alarms"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "action": {

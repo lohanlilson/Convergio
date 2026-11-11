@@ -114,6 +114,8 @@ def publicar(ver):
     info = {"versao": ver, "data": datetime.date.today().isoformat(), "novidades": notas(ver),
             "instalador": {"url": f"https://github.com/{repo}/releases/download/v{ver}/{setup}",
                            "sha256": sha256(p), "tamanho": os.path.getsize(p)}}
+    # pacote da extensão para enviar às lojas (Edge Add-ons, Chrome Web Store)
+    shutil.make_archive(os.path.join(SAIDA, "Convergio-extensao"), "zip", os.path.join(ROOT, "extensao"))
     with open(os.path.join(SAIDA, "versao.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=2)
     with open(os.path.join(SAIDA, "NOTAS.md"), "w", encoding="utf-8") as f:

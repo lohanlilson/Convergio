@@ -70,6 +70,15 @@ QProgressBar::chunk {{ border-radius: 6px;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {c['accent']}, stop:1 {c['accent_2']}); }}
 QCheckBox::indicator:checked {{ background: {c['accent']}; border: 1px solid {c['accent']}; border-radius: 4px; }}
 QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {c['border']}; border-radius: 4px; background: {c['input']}; }}
+QTabWidget::pane {{ border: 1px solid {c['border']}; border-radius: 10px; background: {c['panel']}; top: -1px; }}
+QTabBar::tab {{ background: transparent; color: {c['muted']}; padding: 8px 16px; border: none;
+    border-bottom: 2px solid transparent; font-weight: 600; }}
+QTabBar::tab:selected {{ color: {c['accent']}; border-bottom: 2px solid {c['accent']}; }}
+QTabWidget QWidget {{ background: transparent; }}
+QComboBox, QTimeEdit {{ background: {c['input']}; border: 1px solid {c['border']}; border-radius: 8px; padding: 5px 8px; }}
+QComboBox QAbstractItemView {{ background: {c['panel']}; selection-background-color: {c['selected']};
+    selection-color: {c['text']}; border: 1px solid {c['border']}; }}
+QPlainTextEdit {{ background: {c['input']}; border: 1px solid {c['border']}; border-radius: 8px; }}
 QMenuBar {{ background: {c['bg']}; }}
 QMenuBar::item:selected, QMenu::item:selected {{ background: {c['selected']}; }}
 QMenu {{ background: {c['panel']}; border: 1px solid {c['border']}; padding: 4px; }}

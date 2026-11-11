@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 from . import APP_NAME, AUTHOR, COPYRIGHT, EMAIL, __version__, resource, tema
 from .atualizador import Atualizador, avisar_falha, resultado_da_ultima_atualizacao
 from .integracao import Servidor
+from .recursos import DialogoConfiguracoes, Recursos, RE_LINKS
 from .motor import (BAIXANDO, CONCLUIDO, CONECTANDO, ERRO, NA_FILA, PAUSADO, Download, fmt_bytes, fmt_tempo,
                     parece_nome_de_arquivo)
 
@@ -224,7 +226,7 @@ class DialogoIntegracao(QDialog):
         self.lb_status.setText(f"<b style='color:{cor}; font-size:14px'>{msg}</b>")
 
 
-class Janela(QMainWindow):
+class Janela(QMainWindow, Recursos):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("Convergio", "Convergio")
@@ -342,6 +344,7 @@ class Janela(QMainWindow):
         self.servidor.abrir.connect(self.receber_abrir)
         self.servidor.capturar = self.settings.value("capturar_navegador", "true") != "false"
         self.servidor_ativo = self.servidor.iniciar()
+        self._acoes_recursos()
         self._menus()
         self._bandeja()
         self._configurar_inicio_automatico()
@@ -350,6 +353,7 @@ class Janela(QMainWindow):
         self.timer = QTimer(self, interval=400, timeout=self.atualizar)
         self.timer.start()
         self.carregar_lista()
+        self._iniciar_recursos()
         self.atualizador = Atualizador(self)
         QTimer.singleShot(1500, self._apresentar_integracao)
         QTimer.singleShot(800, self._conferir_atualizacao_anterior)
@@ -361,7 +365,10 @@ class Janela(QMainWindow):
         m = mb.addMenu("&Arquivo")
         a = m.addAction("Colar link e baixar", self.colar_e_baixar)
         a.setShortcut("Ctrl+V")
+        m.addAction("Adicionar vários links…", lambda: self.adicionar_varios()).setShortcut("Ctrl+L")
         m.addAction("Escolher pasta de destino…", self.escolher_pasta)
+        m.addSeparator()
+        m.addAction("Configurações…", lambda: self.abrir_configuracoes()).setShortcut("Ctrl+,")
         m.addSeparator()
         m.addAction("Sair", self.sair).setShortcut("Ctrl+Q")
 
@@ -369,15 +376,18 @@ class Janela(QMainWindow):
         m.addAction("Retomar", self.retomar)
         m.addAction("Pausar", self.pausar)
         m.addAction("Remover", self.remover).setShortcut("Del")
+        m.addAction("Atualizar link…", self.atualizar_link)
         m.addSeparator()
         m.addAction("Retomar todos", self.retomar_todos)
         m.addAction("Pausar todos", self.pausar_todos)
         m.addAction("Limpar concluídos", self.limpar_concluidos)
         m.addSeparator()
+        m.addAction(self.act_limite)
         m.addAction("Abrir pasta", self.abrir_pasta)
 
         m = mb.addMenu("&Navegadores")
-        m.addAction("Instalar a extensão / ver conexão…", self.mostrar_integracao)
+        m.addAction("Vincular navegadores…", lambda: self.abrir_configuracoes(DialogoConfiguracoes.ABA_NAVEGADORES))
+        m.addAction("Como instalar a extensão…", self.mostrar_integracao)
         self.act_capturar = QAction("Capturar downloads dos navegadores", self, checkable=True,
                                     checked=self.settings.value("capturar_navegador", "true") != "false")
         self.act_capturar.toggled.connect(self._alternar_captura)
@@ -389,6 +399,8 @@ class Janela(QMainWindow):
         m.addAction(self.act_perguntar)
 
         m = mb.addMenu("&Opções")
+        m.addAction("Configurações…", lambda: self.abrir_configuracoes())
+        m.addSeparator()
         self.act_iniciar = QAction("Iniciar com o Windows (em segundo plano)", self, checkable=True,
                                    checked=self.settings.value("iniciar_windows", "") == "true")
         self.act_iniciar.toggled.connect(self._alternar_inicio)
@@ -406,12 +418,14 @@ class Janela(QMainWindow):
 
         m = mb.addMenu("&Exibir")
         grupo = QActionGroup(self)
+        self.acts_tema = {}
         atual = self.settings.value("tema", "auto")
         for chave, nome in (("auto", "Tema do Windows"), ("claro", "Tema claro"), ("escuro", "Tema escuro")):
             act = QAction(nome, self, checkable=True, checked=(chave == atual))
             act.triggered.connect(lambda _=False, k=chave: self.trocar_tema(k))
             grupo.addAction(act)
             m.addAction(act)
+            self.acts_tema[chave] = act
 
         m = mb.addMenu("A&juda")
         m.addAction("Verificar atualizações…", lambda: self.atualizador.verificar(False))
@@ -419,6 +433,7 @@ class Janela(QMainWindow):
                        checked=self.settings.value("auto_atualizar", "true") != "false")
         auto.toggled.connect(lambda v: self.settings.setValue("auto_atualizar", "true" if v else "false"))
         m.addAction(auto)
+        self.act_auto_atualizar = auto
         m.addSeparator()
         m.addAction(f"Sobre o {APP_NAME}", self.sobre)
 
@@ -447,10 +462,16 @@ class Janela(QMainWindow):
             (self.ed_url if self.ed_url.hasFocus() else self.ed_pasta).paste()
         elif RE_URL.match(t):
             self.adicionar(t)
+        elif len(RE_LINKS.findall(t)) > 1:
+            self.adicionar_varios(t)
 
     def adicionar(self, url: str | None = None, nome: str | None = None, headers: dict | None = None,
-                  pasta: str | None = None, avisar_duplicado: bool = True):
+                  pasta: str | None = None, avisar_duplicado: bool = True, pausado: bool = False):
         url = (url or self.ed_url.text()).strip()
+        if not RE_URL.match(url) and len(RE_LINKS.findall(url)) > 1:      # vários links colados no campo
+            self.ed_url.clear()
+            self.adicionar_varios(url)
+            return
         if not RE_URL.match(url):
             QMessageBox.warning(self, "Link inválido", "Informe um link começando com http:// ou https://")
             return
@@ -458,8 +479,13 @@ class Janela(QMainWindow):
             if avisar_duplicado:
                 QMessageBox.information(self, "Já na lista", "Esse link já está na lista de downloads.")
             return
-        pasta = pasta or self.ed_pasta.text().strip() or PASTA_PADRAO
-        d = Download(url, pasta, self.sp_con.value(), nome=nome, headers=headers)
+        padrao = self.ed_pasta.text().strip() or PASTA_PADRAO
+        pasta = pasta or padrao
+        # subpasta por tipo só quando o destino é a pasta padrão (se a pessoa escolheu outra, respeita)
+        por_tipo = self.settings.value("por_tipo", "true") != "false" and os.path.normpath(pasta) == os.path.normpath(padrao)
+        d = Download(url, pasta, self.sp_con.value(), nome=nome, headers=headers, por_tipo=por_tipo)
+        if pausado:
+            d.status = PAUSADO
         self._inserir(d)
         self.ed_url.clear()
         self.tab.selectRow(len(self.downloads) - 1)
@@ -583,6 +609,8 @@ class Janela(QMainWindow):
             self.tab.item(r, COL_ETA).setText(fmt_tempo(d.tempo_restante) if em_curso else "")
             self.tab.item(r, COL_CON).setText(str(d.conexoes_ativas) if em_curso else "")
             st = d.status + (f": {d.erro}" if d.status == ERRO and d.erro else "")
+            if d.status == CONCLUIDO and d.concluido_em:
+                st += time.strftime(" · %d/%m %H:%M", time.localtime(d.concluido_em))
             it = self.tab.item(r, COL_STATUS)
             it.setText(st)
             it.setToolTip(st)
@@ -602,12 +630,20 @@ class Janela(QMainWindow):
         if getattr(self, "tray", None):
             self._atualizar_dica_bandeja()
         self._conferir_versao_extensao()
+        self._tick_recursos()
         self.setWindowTitle(f"{APP_NAME} — ↓ {fmt_bytes(total)}/s" if total else APP_NAME)
 
     # ------------------------------------------------------------ persistência
     def salvar_lista(self):
-        dados = [{"url": d.url, "pasta": d.pasta, "conexoes": d.conexoes, "nome": d.nome, "headers": d.headers_extra}
-                 for d in self.downloads if d.status != CONCLUIDO]
+        dados = []
+        concluidos = [d for d in self.downloads if d.status == CONCLUIDO][-300:]      # histórico limitado
+        for d in self.downloads:
+            if d.status == CONCLUIDO and d not in concluidos:
+                continue
+            x = {"url": d.url, "pasta": d.pasta, "conexoes": d.conexoes, "nome": d.nome, "headers": d.headers_extra}
+            if d.status == CONCLUIDO:
+                x.update(concluido=True, caminho=d.caminho, tamanho=d.tamanho, concluido_em=d.concluido_em)
+            dados.append(x)
         try:
             LISTA.parent.mkdir(parents=True, exist_ok=True)
             LISTA.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -620,8 +656,16 @@ class Janela(QMainWindow):
         except (OSError, ValueError):
             return
         for x in dados:
-            d = Download(x["url"], x["pasta"], x.get("conexoes", 16), nome=x.get("nome"), headers=x.get("headers"))
-            d.status = PAUSADO
+            try:
+                d = Download(x["url"], x["pasta"], x.get("conexoes", 16), nome=x.get("nome"), headers=x.get("headers"))
+            except (KeyError, TypeError):
+                continue
+            if x.get("concluido"):
+                d.status = CONCLUIDO
+                d.caminho, d.tamanho = x.get("caminho"), x.get("tamanho")
+                d.concluido_em = x.get("concluido_em") or 0
+            else:
+                d.status = PAUSADO
             self._inserir(d)
 
     def _salvar_opcoes(self):
@@ -676,6 +720,17 @@ class Janela(QMainWindow):
     # ------------------------------------------------------------ navegador e bandeja
     def receber_pedido(self, info: dict):
         url = info.get("url", "")
+        if self._aguardando_link is not None and self._aguardando_link in self.downloads:
+            d = self._aguardando_link
+            self.aplicar_link_novo(d, url, headers_do_pedido(info))
+            if getattr(self, "_dlg_link", None):
+                try:
+                    self._dlg_link.close()
+                except RuntimeError:
+                    pass
+            self.mostrar_janela()
+            self.tray.showMessage(APP_NAME, f"Link atualizado — continuando: {d.nome or url}", icone_app(), 4000)
+            return
         existente = next((i for i, d in enumerate(self.downloads) if d.url == url and d.status != CONCLUIDO), None)
         if existente is not None:
             d = self.downloads[existente]
@@ -740,6 +795,7 @@ class Janela(QMainWindow):
         menu.addAction("Retomar todos", self.retomar_todos)
         menu.addAction("Abrir pasta de downloads", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.ed_pasta.text())))
         menu.addSeparator()
+        menu.addAction(self.act_limite)
         self.act_tray_capturar = QAction("Capturar downloads dos navegadores", self, checkable=True,
                                          checked=self.act_capturar.isChecked())
         self.act_tray_capturar.toggled.connect(self._alternar_captura)

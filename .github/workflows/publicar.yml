@@ -99,5 +99,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp "Saida/Convergio-Setup-$VERSAO.exe" Saida/Convergio-Setup.exe
-          gh release create "v$VERSAO" Saida/*.exe Saida/versao.json \
+          gh release create "v$VERSAO" Saida/*.exe Saida/versao.json Saida/Convergio-extensao.zip \
             --title "Convergio $VERSAO" --notes-file Saida/NOTAS.md --latest

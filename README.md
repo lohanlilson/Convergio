@@ -19,6 +19,9 @@ com servidores que limitam a velocidade de cada conexão.
 - **Reconexão automática** quando a conexão cai, redistribuindo os trechos.
 - Servidores sem suporte a download em partes são baixados com uma conexão só.
 - Fila de downloads simultâneos, captura de links copiados e barra com os trechos de cada conexão.
+- Histórico de concluídos, subpastas por tipo de arquivo, limite de velocidade e agendamento (iniciar, pausar,
+  desligar o computador ao terminar).
+- "Atualizar link" para continuar downloads cujo link expirou, aviso ao terminar e vários links de uma vez.
 - Temas claro e escuro, na mesma identidade visual do [Dispersio PDF](https://github.com/lohanlilson/DispersioPDF).
 - **Atualização automática**: o programa avisa quando sai uma versão nova e se atualiza sozinho.
 - **Captura de downloads dos navegadores** (Chrome, Edge, Brave, Opera) pela extensão em [`extensao/`](extensao),
