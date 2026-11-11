@@ -1,0 +1,99 @@
+# Quando __version__ (convergio/__init__.py) muda na branch main, gera no Windows o executável e o instalador,
+# testa os dois e publica como Release "vX.Y.Z". O Convergio instalado detecta a nova versão sozinho.
+name: Publicar versão
+
+on:
+  push:
+    branches: [main]
+    paths: ["convergio/__init__.py", ".github/workflows/publicar.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publicar
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Conferir versão
+        id: versao
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(python -c "import re;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"',open('convergio/__init__.py',encoding='utf-8').read()).group(1))")
+          echo "VERSAO=$V" >> $GITHUB_ENV
+          if gh release view "v$V" >/dev/null 2>&1; then
+            echo "A versão $V já foi publicada — nada a fazer."; echo "publicar=nao" >> $GITHUB_OUTPUT
+          else
+            echo "Publicando a versão $V"; echo "publicar=sim" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Dependências
+        if: steps.versao.outputs.publicar == 'sim'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Inno Setup
+        if: steps.versao.outputs.publicar == 'sim'
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Autoteste no código-fonte
+        if: steps.versao.outputs.publicar == 'sim'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: python main.py --selftest selftest-fonte.txt
+
+      - name: Gerar executável e instalador
+        if: steps.versao.outputs.publicar == 'sim'
+        run: python build.py --publicar
+
+      - name: Autoteste do executável gerado (sem Python)
+        if: steps.versao.outputs.publicar == 'sim'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\Convergio\Convergio.exe" -ArgumentList "--selftest","selftest.txt" -PassThru; $p.WaitForExit()
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { Write-Error "Autoteste do executável falhou"; exit 1 }
+
+      - name: Teste do instalador (instala em silêncio, testa e desinstala)
+        if: steps.versao.outputs.publicar == 'sim'
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = Resolve-Path "Saida\Convergio-Setup-$env:VERSAO.exe"
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru; $p.WaitForExit()
+          if ($p.ExitCode -ne 0) { throw "Falha na instalação ($($p.ExitCode))" }
+          Start-Sleep 4; Get-Process Convergio -ErrorAction SilentlyContinue | Stop-Process -Force
+          $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{3680703B-A357-4D95-B063-9D9D747F6B6F}_is1"
+          $dir = (Get-ItemProperty $key).InstallLocation
+          Write-Host "Instalado em $dir — versão $((Get-ItemProperty $key).DisplayVersion)"
+          $p = Start-Process (Join-Path $dir "Convergio.exe") -ArgumentList "--selftest","selftest-instalado.txt" -PassThru; $p.WaitForExit()
+          Get-Content selftest-instalado.txt
+          if ($p.ExitCode -ne 0) { throw "Autoteste do programa instalado falhou" }
+          $p = Start-Process (Join-Path $dir "unins000.exe") -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -PassThru; $p.WaitForExit()
+
+      - name: Publicar Release
+        if: steps.versao.outputs.publicar == 'sim'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "Saida/Convergio-Setup-$VERSAO.exe" Saida/Convergio-Setup.exe
+          gh release create "v$VERSAO" Saida/*.exe Saida/versao.json \
+            --title "Convergio $VERSAO" --notes-file Saida/NOTAS.md --latest

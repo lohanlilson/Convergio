@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+build/
+dist/
+Saida/
+*.spec
+*.part
+*.part.json
