@@ -386,14 +386,14 @@ class Janela(QMainWindow):
         m.addAction(self.act_perguntar)
 
         m = mb.addMenu("&Opções")
-        self.act_iniciar = QAction("Iniciar com o Windows", self, checkable=True,
-                                   checked=self.settings.value("iniciar_windows", "true") != "false")
+        self.act_iniciar = QAction("Iniciar com o Windows (em segundo plano)", self, checkable=True,
+                                   checked=self.settings.value("iniciar_windows", "") == "true")
         self.act_iniciar.toggled.connect(self._alternar_inicio)
         m.addAction(self.act_iniciar)
         sub = m.addMenu("Ao clicar em fechar (X)")
         grupo_f = QActionGroup(self)
         self.acts_fechar = {}
-        for chave, nome in (("perguntar", "Perguntar"), ("bandeja", "Continuar em segundo plano (perto do relógio)"),
+        for chave, nome in (("bandeja", "Continuar em segundo plano (perto do relógio)"),
                             ("sair", "Fechar o programa")):
             act = QAction(nome, self, checkable=True, checked=(chave == self.acao_fechar))
             act.triggered.connect(lambda _=False, k=chave: self.settings.setValue("acao_fechar", k))
@@ -648,19 +648,15 @@ class Janela(QMainWindow):
 
     def closeEvent(self, ev):
         acao = "sair" if self._saindo or not QSystemTrayIcon.isSystemTrayAvailable() else self.acao_fechar
-        if acao == "perguntar":
-            acao = self._perguntar_ao_fechar()
-            if acao is None:
-                ev.ignore()
-                return
         if acao == "bandeja":
             self._salvar_opcoes()
             self.salvar_lista()
             self.hide()
             if self.settings.value("aviso_bandeja", "") != "1":
                 self.settings.setValue("aviso_bandeja", "1")
-                self.tray.showMessage(APP_NAME, "O Convergio continua na bandeja, pronto para receber os downloads "
-                                                "do navegador. Para fechar de vez, use Sair.", icone_app(), 6000)
+                self.tray.showMessage(APP_NAME, "O Convergio continua em segundo plano, perto do relógio, pronto para "
+                                                "receber os downloads do navegador. Para fechar de vez, clique no ícone "
+                                                "e escolha Sair.", icone_app(), 7000)
             ev.ignore()
             return
         ativos = [d for d in self.downloads if d.rodando]
@@ -741,7 +737,30 @@ class Janela(QMainWindow):
     CHAVE_RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
     def _configurar_inicio_automatico(self):
-        self._alternar_inicio(self.act_iniciar.isChecked())
+        # reaplica a escolha (atualiza o caminho do programa); na primeira vez, pergunta depois de abrir
+        if self.settings.value("iniciar_windows", "") in ("true", "false"):
+            self._alternar_inicio(self.act_iniciar.isChecked())
+
+    def _perguntar_inicio_windows(self):
+        if self.settings.value("iniciar_windows", "") in ("true", "false"):
+            return
+        caixa = QMessageBox(self)
+        caixa.setWindowTitle(APP_NAME)
+        caixa.setIconPixmap(QPixmap(resource("assets", "convergio.png")).scaled(48, 48, Qt.KeepAspectRatio,
+                                                                                Qt.SmoothTransformation))
+        caixa.setText("<b>Iniciar o Convergio junto com o Windows?</b>")
+        caixa.setInformativeText("Ele abre em silêncio, só em segundo plano perto do relógio, pronto para "
+                                 "receber os downloads do navegador. Dá para mudar depois em Opções ou no ícone "
+                                 "perto do relógio.")
+        sim = caixa.addButton("Sim, iniciar com o Windows", QMessageBox.YesRole)
+        caixa.addButton("Agora não", QMessageBox.NoRole)
+        sim.setObjectName("Primary")
+        sim.style().unpolish(sim)
+        sim.style().polish(sim)
+        caixa.setDefaultButton(sim)
+        caixa.exec()
+        self.act_iniciar.setChecked(caixa.clickedButton() is sim)
+        self._alternar_inicio(caixa.clickedButton() is sim)
 
     def _alternar_inicio(self, ligado: bool):
         self.settings.setValue("iniciar_windows", "true" if ligado else "false")
@@ -762,33 +781,8 @@ class Janela(QMainWindow):
 
     @property
     def acao_fechar(self) -> str:
-        return self.settings.value("acao_fechar", "perguntar")
-
-    def _perguntar_ao_fechar(self):
-        """Devolve "bandeja", "sair" ou None (cancelou)."""
-        caixa = QMessageBox(self)
-        caixa.setWindowTitle(APP_NAME)
-        caixa.setIconPixmap(QPixmap(resource("assets", "convergio.png")).scaled(48, 48, Qt.KeepAspectRatio,
-                                                                                Qt.SmoothTransformation))
-        caixa.setText("<b>Deseja manter o Convergio em segundo plano?</b>")
-        caixa.setInformativeText("Em segundo plano ele fica perto do relógio do Windows, continua os downloads e "
-                                 "recebe os downloads do navegador. Clique no ícone para abrir ou ver as opções.")
-        bt_bandeja = caixa.addButton("Manter em segundo plano", QMessageBox.AcceptRole)
-        bt_sair = caixa.addButton("Fechar o programa", QMessageBox.DestructiveRole)
-        caixa.addButton("Cancelar", QMessageBox.RejectRole)
-        bt_bandeja.setObjectName("Primary")
-        bt_bandeja.style().unpolish(bt_bandeja)
-        bt_bandeja.style().polish(bt_bandeja)
-        caixa.setDefaultButton(bt_bandeja)
-        lembrar = QCheckBox("Lembrar minha escolha (dá para mudar em Opções)")
-        caixa.setCheckBox(lembrar)
-        caixa.exec()
-        clicado = caixa.clickedButton()
-        acao = "bandeja" if clicado is bt_bandeja else "sair" if clicado is bt_sair else None
-        if acao and lembrar.isChecked():
-            self.settings.setValue("acao_fechar", acao)
-            self.acts_fechar[acao].setChecked(True)
-        return acao
+        acao = self.settings.value("acao_fechar", "bandeja")
+        return acao if acao in ("bandeja", "sair") else "bandeja"
 
     def _alternar_captura(self, ligado: bool):
         self.settings.setValue("capturar_navegador", "true" if ligado else "false")
@@ -815,7 +809,10 @@ class Janela(QMainWindow):
             self.tray.setToolTip(f"{APP_NAME} — nenhum download em andamento")
 
     def _apresentar_integracao(self):
-        """Na primeira vez que a janela abre, mostra como instalar a extensão do navegador."""
-        if self.isVisible() and self.settings.value("integracao_apresentada", "") != "1":
+        """Na primeira vez que a janela abre: pergunta sobre iniciar com o Windows e mostra a extensão."""
+        if not self.isVisible():
+            return
+        self._perguntar_inicio_windows()
+        if self.settings.value("integracao_apresentada", "") != "1":
             self.settings.setValue("integracao_apresentada", "1")
             DialogoIntegracao(self).exec()
