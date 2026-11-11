@@ -1,5 +1,9 @@
 # Novidades do Convergio
 
+## 1.1.3
+- **Atualização mais robusta:** antes de copiar, o instalador fecha qualquer processo que esteja rodando de dentro da pasta do Convergio e libera arquivos que continuem em uso, em vez de desfazer a instalação.
+- As próximas atualizações **mostram o erro na tela**, com a opção de tentar de novo, se algo impedir a instalação.
+
 ## 1.1.2
 - **Extensão corrigida:** com o navegador configurado para perguntar onde salvar, o download ficava parado e não começava nem no navegador nem no Convergio. Agora a extensão decide antes da janela "Salvar como": se o Convergio estiver aberto, o download vai direto para ele; se não, o navegador segue normalmente.
 - **Depois de atualizar, recarregue a extensão** em `chrome://extensions` (botão ↻ no cartão do Convergio) ou reinicie o navegador.
