@@ -112,6 +112,49 @@ def testar_motor(log, tamanho=24 * 1024 * 1024):
     return falhas
 
 
+def testar_integracao(log, app):
+    """Servidor local: aceita a extensão, recusa páginas da web, repassa cookies e referer."""
+    import json
+    import urllib.error
+    import urllib.request
+    from .integracao import Servidor
+    falhas = 0
+    srv = Servidor(porta=47999)
+    recebidos = []
+    srv.pedido.connect(recebidos.append)
+    if not srv.iniciar():
+        log("ERRO servidor de integração não iniciou")
+        return 1
+
+    def post(dados, cab):
+        req = urllib.request.Request("http://127.0.0.1:47999/baixar", data=json.dumps(dados).encode(),
+                                     headers={"Content-Type": "application/json", **cab}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    casos = [
+        ("extensão do navegador aceita", {"X-Convergio": "1", "Origin": "chrome-extension://abc"}, 200),
+        ("página da web bloqueada", {"X-Convergio": "1", "Origin": "https://site-malicioso.com"}, 403),
+        ("pedido sem cabeçalho bloqueado", {"Origin": "chrome-extension://abc"}, 403),
+    ]
+    for nome, cab, esperado in casos:
+        cod = post({"url": "https://exemplo.com/a.zip", "cookies": "sessao=1", "referrer": "https://exemplo.com/"}, cab)
+        ok = cod == esperado
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} {nome} (HTTP {cod})")
+    for _ in range(20):
+        app.processEvents()
+        time.sleep(0.02)
+    ok = len(recebidos) == 1 and recebidos[0].get("cookies") == "sessao=1" and srv.extensao_conectada
+    falhas += not ok
+    log(f"{'OK ' if ok else 'ERRO'} pedido entregue ao programa com cookies ({len(recebidos)} recebido)")
+    srv.parar()
+    return falhas
+
+
 def executar(argv):
     i = argv.index("--selftest")
     saida = argv[i + 1] if len(argv) > i + 1 else None
@@ -132,13 +175,26 @@ def executar(argv):
         from .janela import Janela
         app = QApplication.instance() or QApplication([])
         tema.aplicar(app, False)
+        falhas += testar_integracao(log, app)
         j = Janela()
         j.atualizador.verificar_auto = lambda: None
         j.show()
         app.processEvents()
-        ok = not j.windowIcon().isNull() and j.tab.columnCount() == 7
+        ok = not j.windowIcon().isNull() and j.tab.columnCount() == 7 and j.tray.contextMenu() is not None
         falhas += not ok
-        log(f"{'OK ' if ok else 'ERRO'} janela e ícone")
+        log(f"{'OK ' if ok else 'ERRO'} janela, ícone e bandeja")
+        # download vindo do navegador sem perguntar: entra na lista com os cookies
+        j.settings.setValue("perguntar_navegador", "false")
+        j.ed_pasta.setText(tempfile.mkdtemp(prefix="convergio-nav-"))
+        j.receber_pedido({"url": "http://127.0.0.1:9/arquivo.zip", "cookies": "sessao=1",
+                          "referrer": "https://exemplo.com/", "nome": "arquivo.zip"})
+        d = j.downloads[-1] if j.downloads else None
+        ok = bool(d) and d.headers.get("Cookie") == "sessao=1" and d.nome == "arquivo.zip"
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} download do navegador entra na fila com os cookies")
+        j.settings.remove("perguntar_navegador")
+        for x in j.downloads:
+            x.pausar()
         j.timer.stop()
         j.hide()
     except Exception as e:  # noqa: BLE001

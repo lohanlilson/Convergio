@@ -80,7 +80,8 @@ class Download:
         self.pasta = pasta
         self.conexoes = max(1, min(32, conexoes))
         self.nome = nome
-        self.headers = {"User-Agent": UA, "Accept-Encoding": "identity", **(headers or {})}
+        self.headers_extra = {k: v for k, v in (headers or {}).items() if v}   # cookies, referer… do navegador
+        self.headers = {"User-Agent": UA, **self.headers_extra, "Accept-Encoding": "identity"}
         self.caminho: str | None = None
         self.tamanho: int | None = None
         self.aceita_range = False

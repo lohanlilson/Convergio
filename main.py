@@ -1,6 +1,7 @@
 """Convergio — ponto de entrada.
 
   Convergio.exe [link]                  abre o programa (e adiciona o link, se informado)
+  Convergio.exe --minimizado            inicia só na bandeja (usado ao iniciar com o Windows)
   Convergio.exe --selftest saida.txt    autoteste (usado na publicação)
   Convergio.exe --run-update <inst> <pid>   uso interno da atualização automática
 """
@@ -15,6 +16,22 @@ def main():
     if "--selftest" in argv:
         from convergio.selftest import executar
         return executar(argv)
+
+    from urllib.parse import unquote
+    links = []
+    for a in argv[1:]:
+        if a.lower().startswith("convergio:"):          # protocolo convergio:<link>
+            a = unquote(a[len("convergio:"):].lstrip("/"))
+        if a.lower().startswith(("http://", "https://")):
+            links.append(a)
+
+    # instância única: se já estiver aberto, entrega os links (ou só mostra a janela) e encerra
+    from convergio.integracao import entregar_a_instancia_aberta, instancia_aberta
+    if "--minimizado" in argv:
+        if instancia_aberta():
+            return 0
+    elif entregar_a_instancia_aberta(links):
+        return 0
 
     if sys.platform == "win32":
         import ctypes
@@ -32,12 +49,11 @@ def main():
     from PySide6.QtCore import QSettings
     escolha = QSettings("Convergio", "Convergio").value("tema", "auto")
     tema.aplicar(app, tema.sistema_escuro() if escolha == "auto" else escolha == "escuro")
+    app.setQuitOnLastWindowClosed(False)              # continua rodando na bandeja
     j = Janela()
-    j.show()
-    from urllib.parse import unquote
-    for a in argv[1:]:
-        if a.lower().startswith("convergio:"):          # protocolo convergio:<link>
-            a = unquote(a[len("convergio:"):].lstrip("/"))
+    if "--minimizado" not in argv:
+        j.show()
+    for a in links:
         if RE_URL.match(a):
             j.adicionar(a)
     return app.exec()

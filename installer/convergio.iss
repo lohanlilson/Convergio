@@ -44,7 +44,7 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
-CloseApplications=yes
+CloseApplications=force
 RestartApplications=no
 AppMutex=Convergio_Running
 MinVersion=10.0
@@ -57,6 +57,8 @@ Name: "desktopicon"; Description: "Criar atalho na Área de Trabalho"; GroupDesc
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; extensão do navegador (Chrome, Edge, Brave, Opera): "Carregar sem compactação" nesta pasta
+Source: "..\extensao\*"; DestDir: "{app}\extensao"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
 ; arquivos de versões anteriores (o PyInstaller pode mudar nomes de bibliotecas entre versões)
@@ -74,10 +76,18 @@ Root: HKA; Subkey: "Software\Classes\convergio"; ValueType: string; ValueName: "
 Root: HKA; Subkey: "Software\Classes\convergio\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
 Root: HKA; Subkey: "Software\Classes\convergio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
 
+; o programa grava "iniciar com o Windows" nesta chave; a desinstalação remove
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Convergio"; ValueType: none; Flags: uninsdeletevalue dontcreatekey
+
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Abrir o Convergio agora"; Flags: nowait postinstall skipifsilent
 ; atualização automática (instalação silenciosa): reabre o programa ao terminar
 Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
+[UninstallRun]
+; encerra o Convergio que estiver na bandeja antes de remover os arquivos
+Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#AppExe} /F"; Flags: runhidden; RunOnceId: "EncerrarConvergio"
+
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\extensao"

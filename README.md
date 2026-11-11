@@ -21,7 +21,20 @@ com servidores que limitam a velocidade de cada conexão.
 - Fila de downloads simultâneos, captura de links copiados e barra com os trechos de cada conexão.
 - Temas claro e escuro, na mesma identidade visual do [Dispersio PDF](https://github.com/lohanlilson/DispersioPDF).
 - **Atualização automática**: o programa avisa quando sai uma versão nova e se atualiza sozinho.
+- **Captura de downloads dos navegadores** (Chrome, Edge, Brave, Opera) pela extensão em [`extensao/`](extensao),
+  levando os cookies da sessão. Se o Convergio estiver fechado, o navegador baixa normalmente.
+- Fica em **segundo plano** perto do relógio do Windows, com menu de atalhos, e pode iniciar com o Windows.
 - Protocolo `convergio:<link>`, que permite enviar downloads de outros programas.
+
+## Extensão do navegador
+
+O instalador copia a extensão para `C:\Program Files\Convergio\extensao`. Para instalar no navegador:
+
+1. Abra `chrome://extensions` (no Edge, `edge://extensions`).
+2. Ative o **Modo do desenvolvedor**.
+3. Clique em **Carregar sem compactação** e escolha a pasta `extensao`.
+
+O programa se comunica com a extensão só pela própria máquina (`127.0.0.1:47851`) e recusa pedidos de páginas da web.
 
 ## Executar pelo código-fonte
 

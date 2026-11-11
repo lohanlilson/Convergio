@@ -4,18 +4,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QCheckBox, QDialog, QFileDialog, QFormLayout, QFrame, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QSpinBox,
+    QSystemTrayIcon, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import APP_NAME, AUTHOR, COPYRIGHT, EMAIL, __version__, resource, tema
 from .atualizador import Atualizador
+from .integracao import Servidor
 from .motor import BAIXANDO, CONCLUIDO, CONECTANDO, ERRO, NA_FILA, PAUSADO, Download, fmt_bytes, fmt_tempo
 
 LISTA = Path(os.environ.get("APPDATA") or Path.home()) / "Convergio" / "downloads.json"
@@ -61,6 +64,162 @@ class BarraSegmentos(QWidget):
                            QColor(c["accent_2"] if ativo else c["accent"]))
                 if ativo and pos <= end:
                     p.fillRect(int(x + feito), r.y(), 3, r.height(), QColor(c["gold"]))
+
+
+def nome_do_link(url: str) -> str:
+    nome = unquote(os.path.basename(urlparse(url).path))
+    return re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", nome).strip(" .")
+
+
+class DialogoNovoDownload(QDialog):
+    """Janela que aparece quando o navegador envia um download (como a "Informações do arquivo" do IDM)."""
+
+    def __init__(self, janela, info: dict):
+        super().__init__(None, Qt.WindowStaysOnTopHint)
+        self.janela, self.info = janela, info
+        self.setWindowTitle(f"{APP_NAME} — novo download")
+        self.setWindowIcon(icone_app())
+        self.setMinimumWidth(560)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        url = info["url"]
+        lay = QVBoxLayout(self)
+        topo = QHBoxLayout()
+        logo = QLabel()
+        logo.setPixmap(QPixmap(resource("assets", "convergio.png")).scaled(40, 40, Qt.KeepAspectRatio,
+                                                                           Qt.SmoothTransformation))
+        topo.addWidget(logo)
+        origem = info.get("navegador") or "navegador"
+        topo.addWidget(QLabel(f"<b style='font-size:15px'>Download capturado do {origem}</b>"))
+        topo.addStretch()
+        lay.addLayout(topo)
+        form = QFormLayout()
+        lb_url = QLabel(url if len(url) < 90 else url[:60] + "…" + url[-25:])
+        lb_url.setToolTip(url)
+        lb_url.setObjectName("Muted")
+        lb_url.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addRow("Link:", lb_url)
+        self.ed_nome = QLineEdit(info.get("nome") or nome_do_link(url))
+        self.ed_nome.setPlaceholderText("definido pelo servidor ao iniciar")
+        form.addRow("Arquivo:", self.ed_nome)
+        tam = info.get("tamanho")
+        form.addRow("Tamanho:", QLabel(fmt_bytes(tam) if tam else "será obtido ao iniciar"))
+        lp = QHBoxLayout()
+        self.ed_pasta = QLineEdit(janela.ed_pasta.text())
+        bt = QPushButton("Escolher…")
+        bt.clicked.connect(self._pasta)
+        lp.addWidget(self.ed_pasta, 1)
+        lp.addWidget(bt)
+        form.addRow("Salvar em:", lp)
+        lay.addLayout(form)
+        self.ck = QCheckBox("Não perguntar de novo (baixar direto)")
+        lay.addWidget(self.ck)
+        botoes = QHBoxLayout()
+        botoes.addStretch()
+        cancelar = QPushButton("Cancelar")
+        baixar = QPushButton("Baixar agora")
+        baixar.setObjectName("Primary")
+        baixar.setDefault(True)
+        cancelar.clicked.connect(self.reject)
+        baixar.clicked.connect(self._baixar)
+        botoes.addWidget(cancelar)
+        botoes.addWidget(baixar)
+        lay.addLayout(botoes)
+
+    def _pasta(self):
+        p = QFileDialog.getExistingDirectory(self, "Pasta de destino", self.ed_pasta.text())
+        if p:
+            self.ed_pasta.setText(p)
+
+    def _baixar(self):
+        if self.ck.isChecked():
+            self.janela.settings.setValue("perguntar_navegador", "false")
+            self.janela.act_perguntar.setChecked(False)
+        nome = self.ed_nome.text().strip() or None
+        self.janela.adicionar(self.info["url"], nome=nome, headers=headers_do_pedido(self.info),
+                              pasta=self.ed_pasta.text().strip(), avisar_duplicado=False)
+        self.accept()
+
+    def mostrar(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+
+def headers_do_pedido(info: dict) -> dict:
+    h = {}
+    if info.get("cookies"):
+        h["Cookie"] = info["cookies"]
+    if info.get("referrer"):
+        h["Referer"] = info["referrer"]
+    if info.get("userAgent"):
+        h["User-Agent"] = info["userAgent"]
+    return h
+
+
+def pasta_extensao() -> str:
+    """Pasta da extensão: ao lado do executável (instalado) ou na raiz do projeto (código-fonte)."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(sys.executable), "extensao")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "extensao")
+
+
+class DialogoIntegracao(QDialog):
+    def __init__(self, janela):
+        super().__init__(janela)
+        self.janela = janela
+        self.setWindowTitle("Integração com navegadores")
+        self.setMinimumWidth(600)
+        lay = QVBoxLayout(self)
+        self.lb_status = QLabel()
+        lay.addWidget(self.lb_status)
+        pasta = pasta_extensao()
+        texto = QLabel(
+            "<p>Com a extensão instalada, os downloads do <b>Chrome, Edge, Brave e Opera</b> vão direto para o "
+            f"{APP_NAME}. Se o programa estiver fechado, o navegador baixa normalmente.</p>"
+            "<p><b>Para instalar (uma vez só):</b></p><ol>"
+            "<li>No navegador, abra <code>chrome://extensions</code> (no Edge: <code>edge://extensions</code>).</li>"
+            "<li>Ative o <b>Modo do desenvolvedor</b>, no canto da página.</li>"
+            "<li>Clique em <b>Carregar sem compactação</b> e escolha a pasta abaixo.</li></ol>"
+            "<p>Também dá para clicar com o botão direito num link e escolher <b>Baixar com o Convergio</b>.</p>")
+        texto.setWordWrap(True)
+        texto.setTextFormat(Qt.RichText)
+        lay.addWidget(texto)
+        lp = QHBoxLayout()
+        ed = QLineEdit(pasta)
+        ed.setReadOnly(True)
+        copiar = QPushButton("Copiar caminho")
+        copiar.clicked.connect(lambda: (QGuiApplication.clipboard().setText(pasta), copiar.setText("Copiado ✓")))
+        abrir = QPushButton("Abrir pasta")
+        abrir.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(pasta)))
+        lp.addWidget(ed, 1)
+        lp.addWidget(copiar)
+        lp.addWidget(abrir)
+        lay.addLayout(lp)
+        fechar = QPushButton("Fechar")
+        fechar.setObjectName("Primary")
+        fechar.clicked.connect(self.accept)
+        lb = QHBoxLayout()
+        lb.addStretch()
+        lb.addWidget(fechar)
+        lay.addLayout(lb)
+        lay.addStretch(1)
+        self.lb_status.setSizePolicy(self.lb_status.sizePolicy().horizontalPolicy(),
+                                     self.lb_status.sizePolicy().Policy.Fixed)
+        self._timer = QTimer(self, interval=1000, timeout=self._status)
+        self._timer.start()
+        self._status()
+
+    def _status(self):
+        srv = self.janela.servidor
+        c = tema.atual
+        if not self.janela.servidor_ativo:
+            msg, cor = "A porta de integração está ocupada por outro programa.", c["danger"]
+        elif srv.extensao_conectada:
+            nav = f" ({srv.navegador})" if srv.navegador else ""
+            msg, cor = f"✓ Extensão conectada{nav}", c["ok"]
+        else:
+            msg, cor = "Extensão ainda não conectada", c["muted"]
+        self.lb_status.setText(f"<b style='color:{cor}; font-size:14px'>{msg}</b>")
 
 
 class Janela(QMainWindow):
@@ -174,12 +333,23 @@ class Janela(QMainWindow):
         self.setCentralWidget(w)
         self.statusBar()
 
+        self._saindo = False
+        self._encerrado = False
+        self.servidor = Servidor()
+        self.servidor.pedido.connect(self.receber_pedido)
+        self.servidor.abrir.connect(self.receber_abrir)
+        self.servidor.capturar = self.settings.value("capturar_navegador", "true") != "false"
+        self.servidor_ativo = self.servidor.iniciar()
         self._menus()
+        self._bandeja()
+        self._configurar_inicio_automatico()
         QGuiApplication.clipboard().dataChanged.connect(self.clipboard_mudou)
+        QApplication.instance().aboutToQuit.connect(self._encerrar)
         self.timer = QTimer(self, interval=400, timeout=self.atualizar)
         self.timer.start()
         self.carregar_lista()
         self.atualizador = Atualizador(self)
+        QTimer.singleShot(1500, self._apresentar_integracao)
         QTimer.singleShot(3000, self.atualizador.verificar_auto)
 
     # ------------------------------------------------------------ menus
@@ -190,7 +360,7 @@ class Janela(QMainWindow):
         a.setShortcut("Ctrl+V")
         m.addAction("Escolher pasta de destino…", self.escolher_pasta)
         m.addSeparator()
-        m.addAction("Sair", self.close).setShortcut("Ctrl+Q")
+        m.addAction("Sair", self.sair).setShortcut("Ctrl+Q")
 
         m = mb.addMenu("&Downloads")
         m.addAction("Retomar", self.retomar)
@@ -202,6 +372,34 @@ class Janela(QMainWindow):
         m.addAction("Limpar concluídos", self.limpar_concluidos)
         m.addSeparator()
         m.addAction("Abrir pasta", self.abrir_pasta)
+
+        m = mb.addMenu("&Navegadores")
+        m.addAction("Instalar a extensão / ver conexão…", self.mostrar_integracao)
+        self.act_capturar = QAction("Capturar downloads dos navegadores", self, checkable=True,
+                                    checked=self.settings.value("capturar_navegador", "true") != "false")
+        self.act_capturar.toggled.connect(self._alternar_captura)
+        m.addAction(self.act_capturar)
+        self.act_perguntar = QAction("Perguntar antes de baixar", self, checkable=True,
+                                     checked=self.settings.value("perguntar_navegador", "true") != "false")
+        self.act_perguntar.toggled.connect(
+            lambda v: self.settings.setValue("perguntar_navegador", "true" if v else "false"))
+        m.addAction(self.act_perguntar)
+
+        m = mb.addMenu("&Opções")
+        self.act_iniciar = QAction("Iniciar com o Windows", self, checkable=True,
+                                   checked=self.settings.value("iniciar_windows", "true") != "false")
+        self.act_iniciar.toggled.connect(self._alternar_inicio)
+        m.addAction(self.act_iniciar)
+        sub = m.addMenu("Ao clicar em fechar (X)")
+        grupo_f = QActionGroup(self)
+        self.acts_fechar = {}
+        for chave, nome in (("perguntar", "Perguntar"), ("bandeja", "Continuar em segundo plano (perto do relógio)"),
+                            ("sair", "Fechar o programa")):
+            act = QAction(nome, self, checkable=True, checked=(chave == self.acao_fechar))
+            act.triggered.connect(lambda _=False, k=chave: self.settings.setValue("acao_fechar", k))
+            grupo_f.addAction(act)
+            sub.addAction(act)
+            self.acts_fechar[chave] = act
 
         m = mb.addMenu("&Exibir")
         grupo = QActionGroup(self)
@@ -247,15 +445,18 @@ class Janela(QMainWindow):
         elif RE_URL.match(t):
             self.adicionar(t)
 
-    def adicionar(self, url: str | None = None):
+    def adicionar(self, url: str | None = None, nome: str | None = None, headers: dict | None = None,
+                  pasta: str | None = None, avisar_duplicado: bool = True):
         url = (url or self.ed_url.text()).strip()
         if not RE_URL.match(url):
             QMessageBox.warning(self, "Link inválido", "Informe um link começando com http:// ou https://")
             return
         if any(d.url == url and d.status != CONCLUIDO for d in self.downloads):
-            QMessageBox.information(self, "Já na lista", "Esse link já está na lista de downloads.")
+            if avisar_duplicado:
+                QMessageBox.information(self, "Já na lista", "Esse link já está na lista de downloads.")
             return
-        d = Download(url, self.ed_pasta.text().strip() or PASTA_PADRAO, self.sp_con.value())
+        pasta = pasta or self.ed_pasta.text().strip() or PASTA_PADRAO
+        d = Download(url, pasta, self.sp_con.value(), nome=nome, headers=headers)
         self._inserir(d)
         self.ed_url.clear()
         self.tab.selectRow(len(self.downloads) - 1)
@@ -395,11 +596,13 @@ class Janela(QMainWindow):
         else:
             self.lb_seg.setText("Selecione um download para ver as conexões")
         self.lb_total.setText(f"↓ {fmt_bytes(total)}/s" if total else "")
+        if getattr(self, "tray", None):
+            self._atualizar_dica_bandeja()
         self.setWindowTitle(f"{APP_NAME} — ↓ {fmt_bytes(total)}/s" if total else APP_NAME)
 
     # ------------------------------------------------------------ persistência
     def salvar_lista(self):
-        dados = [{"url": d.url, "pasta": d.pasta, "conexoes": d.conexoes, "nome": d.nome}
+        dados = [{"url": d.url, "pasta": d.pasta, "conexoes": d.conexoes, "nome": d.nome, "headers": d.headers_extra}
                  for d in self.downloads if d.status != CONCLUIDO]
         try:
             LISTA.parent.mkdir(parents=True, exist_ok=True)
@@ -413,7 +616,7 @@ class Janela(QMainWindow):
         except (OSError, ValueError):
             return
         for x in dados:
-            d = Download(x["url"], x["pasta"], x.get("conexoes", 16), nome=x.get("nome"))
+            d = Download(x["url"], x["pasta"], x.get("conexoes", 16), nome=x.get("nome"), headers=x.get("headers"))
             d.status = PAUSADO
             self._inserir(d)
 
@@ -425,9 +628,16 @@ class Janela(QMainWindow):
         s.setValue("clipboard", "true" if self.ck_clip.isChecked() else "false")
 
     def fechar_para_atualizar(self):
+        self._saindo = True
         self._encerrar()
 
     def _encerrar(self):
+        if self._encerrado:
+            return
+        self._encerrado = True
+        self.servidor.parar()
+        if getattr(self, "tray", None):
+            self.tray.hide()
         self.timer.stop()
         for d in self.downloads:
             d.pausar()
@@ -437,11 +647,175 @@ class Janela(QMainWindow):
         self._salvar_opcoes()
 
     def closeEvent(self, ev):
+        acao = "sair" if self._saindo or not QSystemTrayIcon.isSystemTrayAvailable() else self.acao_fechar
+        if acao == "perguntar":
+            acao = self._perguntar_ao_fechar()
+            if acao is None:
+                ev.ignore()
+                return
+        if acao == "bandeja":
+            self._salvar_opcoes()
+            self.salvar_lista()
+            self.hide()
+            if self.settings.value("aviso_bandeja", "") != "1":
+                self.settings.setValue("aviso_bandeja", "1")
+                self.tray.showMessage(APP_NAME, "O Convergio continua na bandeja, pronto para receber os downloads "
+                                                "do navegador. Para fechar de vez, use Sair.", icone_app(), 6000)
+            ev.ignore()
+            return
         ativos = [d for d in self.downloads if d.rodando]
         if ativos and QMessageBox.question(
                 self, APP_NAME, f"Há {len(ativos)} download(s) em andamento. Eles serão pausados e "
                                 "continuam quando você abrir o programa de novo. Fechar?") != QMessageBox.Yes:
+            self._saindo = False
             ev.ignore()
             return
         self._encerrar()
         ev.accept()
+
+    # ------------------------------------------------------------ navegador e bandeja
+    def receber_pedido(self, info: dict):
+        url = info.get("url", "")
+        if any(d.url == url and d.status != CONCLUIDO for d in self.downloads):
+            self.mostrar_janela()
+            return
+        if self.settings.value("perguntar_navegador", "true") == "false":
+            self.adicionar(url, nome=info.get("nome") or None, headers=headers_do_pedido(info), avisar_duplicado=False)
+            self.tray.showMessage(APP_NAME, f"Baixando {info.get('nome') or nome_do_link(url) or url}",
+                                  icone_app(), 3000)
+            return
+        dlg = DialogoNovoDownload(self, info)
+        self._dialogos = [x for x in getattr(self, "_dialogos", []) if x.isVisible()] + [dlg]
+        dlg.mostrar()
+
+    def receber_abrir(self, links: list):
+        self.mostrar_janela()
+        for u in links:
+            if RE_URL.match(u):
+                self.adicionar(u, avisar_duplicado=False)
+
+    def mostrar_janela(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def mostrar_integracao(self):
+        self.mostrar_janela()
+        DialogoIntegracao(self).exec()
+
+    def sair(self):
+        self._saindo = True
+        if not self.close():
+            self._saindo = False
+            return
+        QApplication.instance().quit()
+
+    def _bandeja(self):
+        self.tray = QSystemTrayIcon(icone_app(), self)
+        self.tray.setToolTip(APP_NAME)
+        menu = QMenu(self)
+        abrir = menu.addAction(f"Abrir o {APP_NAME}", self.mostrar_janela)
+        f = abrir.font()
+        f.setBold(True)
+        abrir.setFont(f)
+        menu.addAction("Baixar o link copiado", self.colar_da_area_de_transferencia)
+        menu.addSeparator()
+        menu.addAction("Pausar todos", self.pausar_todos)
+        menu.addAction("Retomar todos", self.retomar_todos)
+        menu.addAction("Abrir pasta de downloads", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.ed_pasta.text())))
+        menu.addSeparator()
+        self.act_tray_capturar = QAction("Capturar downloads dos navegadores", self, checkable=True,
+                                         checked=self.act_capturar.isChecked())
+        self.act_tray_capturar.toggled.connect(self._alternar_captura)
+        menu.addAction(self.act_tray_capturar)
+        menu.addAction(self.act_iniciar)
+        menu.addAction("Verificar atualizações…", lambda: (self.mostrar_janela(), self.atualizador.verificar(False)))
+        menu.addSeparator()
+        menu.addAction(f"Sair do {APP_NAME}", self.sair)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(
+            lambda motivo: self.mostrar_janela() if motivo in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
+        self.tray.show()
+
+    # ------------------------------------------------------------ iniciar com o Windows
+    CHAVE_RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+    def _configurar_inicio_automatico(self):
+        self._alternar_inicio(self.act_iniciar.isChecked())
+
+    def _alternar_inicio(self, ligado: bool):
+        self.settings.setValue("iniciar_windows", "true" if ligado else "false")
+        if sys.platform != "win32" or not getattr(sys, "frozen", False):
+            return
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.CHAVE_RUN, 0, winreg.KEY_SET_VALUE) as k:
+                if ligado:
+                    winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, f'"{sys.executable}" --minimizado')
+                else:
+                    try:
+                        winreg.DeleteValue(k, APP_NAME)
+                    except FileNotFoundError:
+                        pass
+        except OSError:
+            pass
+
+    @property
+    def acao_fechar(self) -> str:
+        return self.settings.value("acao_fechar", "perguntar")
+
+    def _perguntar_ao_fechar(self):
+        """Devolve "bandeja", "sair" ou None (cancelou)."""
+        caixa = QMessageBox(self)
+        caixa.setWindowTitle(APP_NAME)
+        caixa.setIconPixmap(QPixmap(resource("assets", "convergio.png")).scaled(48, 48, Qt.KeepAspectRatio,
+                                                                                Qt.SmoothTransformation))
+        caixa.setText("<b>Deseja manter o Convergio em segundo plano?</b>")
+        caixa.setInformativeText("Em segundo plano ele fica perto do relógio do Windows, continua os downloads e "
+                                 "recebe os downloads do navegador. Clique no ícone para abrir ou ver as opções.")
+        bt_bandeja = caixa.addButton("Manter em segundo plano", QMessageBox.AcceptRole)
+        bt_sair = caixa.addButton("Fechar o programa", QMessageBox.DestructiveRole)
+        caixa.addButton("Cancelar", QMessageBox.RejectRole)
+        bt_bandeja.setObjectName("Primary")
+        bt_bandeja.style().unpolish(bt_bandeja)
+        bt_bandeja.style().polish(bt_bandeja)
+        caixa.setDefaultButton(bt_bandeja)
+        lembrar = QCheckBox("Lembrar minha escolha (dá para mudar em Opções)")
+        caixa.setCheckBox(lembrar)
+        caixa.exec()
+        clicado = caixa.clickedButton()
+        acao = "bandeja" if clicado is bt_bandeja else "sair" if clicado is bt_sair else None
+        if acao and lembrar.isChecked():
+            self.settings.setValue("acao_fechar", acao)
+            self.acts_fechar[acao].setChecked(True)
+        return acao
+
+    def _alternar_captura(self, ligado: bool):
+        self.settings.setValue("capturar_navegador", "true" if ligado else "false")
+        self.servidor.capturar = ligado
+        if getattr(self, "act_tray_capturar", None) and self.act_tray_capturar.isChecked() != ligado:
+            self.act_tray_capturar.setChecked(ligado)
+        if self.act_capturar.isChecked() != ligado:
+            self.act_capturar.setChecked(ligado)
+
+    def colar_da_area_de_transferencia(self):
+        t = QGuiApplication.clipboard().text().strip()
+        self.mostrar_janela()
+        if RE_URL.match(t):
+            self.adicionar(t)
+        else:
+            self.ed_url.setFocus()
+
+    def _atualizar_dica_bandeja(self):
+        ativos = [d for d in self.downloads if d.status == BAIXANDO]
+        if ativos:
+            vel = sum(d.velocidade for d in ativos)
+            self.tray.setToolTip(f"{APP_NAME} — {len(ativos)} baixando, {fmt_bytes(vel)}/s")
+        else:
+            self.tray.setToolTip(f"{APP_NAME} — nenhum download em andamento")
+
+    def _apresentar_integracao(self):
+        """Na primeira vez que a janela abre, mostra como instalar a extensão do navegador."""
+        if self.isVisible() and self.settings.value("integracao_apresentada", "") != "1":
+            self.settings.setValue("integracao_apresentada", "1")
+            DialogoIntegracao(self).exec()

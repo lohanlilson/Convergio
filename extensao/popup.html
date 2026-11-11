@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icones/icone48.png" alt="">
+    <div>
+      <h1>Convergio</h1>
+      <p id="status" class="status">Verificando…</p>
+    </div>
+  </header>
+  <label class="linha">
+    <span>Capturar downloads</span>
+    <input type="checkbox" id="ativo" class="chave">
+  </label>
+  <label class="linha">
+    <span>Ignorar arquivos menores que</span>
+    <span><input type="number" id="minimo" min="0" max="1024" step="1"> MB</span>
+  </label>
+  <p class="dica">Dica: clique com o botão direito num link e escolha <b>Baixar com o Convergio</b>.</p>
+  <script src="popup.js"></script>
+</body>
+</html>
