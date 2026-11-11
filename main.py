@@ -66,6 +66,7 @@ def main():
     tema.aplicar(app, tema.sistema_escuro() if escolha == "auto" else escolha == "escuro")
     app.setQuitOnLastWindowClosed(False)              # continua rodando na bandeja
     j = Janela()
+    j.centralizar()
     if "--minimizado" not in argv:
         j.show()
     for a in links:

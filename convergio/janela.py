@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
 from . import APP_NAME, AUTHOR, COPYRIGHT, EMAIL, __version__, resource, tema
 from .atualizador import Atualizador, avisar_falha, resultado_da_ultima_atualizacao
 from .integracao import Servidor
-from .motor import BAIXANDO, CONCLUIDO, CONECTANDO, ERRO, NA_FILA, PAUSADO, Download, fmt_bytes, fmt_tempo
+from .motor import (BAIXANDO, CONCLUIDO, CONECTANDO, ERRO, NA_FILA, PAUSADO, Download, fmt_bytes, fmt_tempo,
+                    parece_nome_de_arquivo)
 
 LISTA = Path(os.environ.get("APPDATA") or Path.home()) / "Convergio" / "downloads.json"
 PASTA_PADRAO = str(Path.home() / "Downloads")
@@ -98,7 +99,8 @@ class DialogoNovoDownload(QDialog):
         lb_url.setObjectName("Muted")
         lb_url.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addRow("Link:", lb_url)
-        self.ed_nome = QLineEdit(info.get("nome") or nome_do_link(url))
+        sugestao = next((n for n in (info.get("nome"), nome_do_link(url)) if parece_nome_de_arquivo(n)), "")
+        self.ed_nome = QLineEdit(sugestao)
         self.ed_nome.setPlaceholderText("definido pelo servidor ao iniciar")
         form.addRow("Arquivo:", self.ed_nome)
         tam = info.get("tamanho")
@@ -599,6 +601,7 @@ class Janela(QMainWindow):
         self.lb_total.setText(f"↓ {fmt_bytes(total)}/s" if total else "")
         if getattr(self, "tray", None):
             self._atualizar_dica_bandeja()
+        self._conferir_versao_extensao()
         self.setWindowTitle(f"{APP_NAME} — ↓ {fmt_bytes(total)}/s" if total else APP_NAME)
 
     # ------------------------------------------------------------ persistência
@@ -677,7 +680,8 @@ class Janela(QMainWindow):
             self.mostrar_janela()
             return
         if self.settings.value("perguntar_navegador", "true") == "false":
-            self.adicionar(url, nome=info.get("nome") or None, headers=headers_do_pedido(info), avisar_duplicado=False)
+            nome = info.get("nome") if parece_nome_de_arquivo(info.get("nome")) else None
+            self.adicionar(url, nome=nome, headers=headers_do_pedido(info), avisar_duplicado=False)
             self.tray.showMessage(APP_NAME, f"Baixando {info.get('nome') or nome_do_link(url) or url}",
                                   icone_app(), 3000)
             return
@@ -823,3 +827,35 @@ class Janela(QMainWindow):
         if info:
             self.mostrar_janela()
             avisar_falha(self, info)
+
+    def centralizar(self):
+        tela = (self.screen() or QGuiApplication.primaryScreen()).availableGeometry()
+        largura, altura = min(self.width(), tela.width() - 40), min(self.height(), tela.height() - 40)
+        self.resize(largura, altura)
+        self.move(tela.x() + (tela.width() - largura) // 2, tela.y() + (tela.height() - altura) // 2)
+
+    def _conferir_versao_extensao(self):
+        """Avisa (uma vez por execução) se o navegador ainda usa uma versão antiga da extensão."""
+        versao = self.servidor.versao_extensao
+        if not versao or getattr(self, "_aviso_extensao", False):
+            return
+        try:
+            with open(os.path.join(pasta_extensao(), "manifest.json"), encoding="utf-8") as f:
+                atual = json.load(f)["version"]
+        except (OSError, ValueError, KeyError):
+            return
+        def t(v):
+            return tuple(int(x) for x in re.findall(r"\d+", v)) or (0,)
+        if versao != "antiga" and t(versao) >= t(atual):
+            return
+        self._aviso_extensao = True
+        caixa = QMessageBox(QMessageBox.Information, APP_NAME,
+                            "<b>Recarregue a extensão do Convergio no navegador</b>", parent=None)
+        caixa.setWindowIcon(icone_app())
+        caixa.setWindowFlag(Qt.WindowStaysOnTopHint)
+        caixa.setInformativeText(
+            f"O navegador ainda está usando uma versão antiga da extensão ({versao}); a atual é a {atual}.\n\n"
+            "Abra chrome://extensions (no Edge, edge://extensions) e clique no botão ↻ (recarregar) no cartão "
+            "do Convergio, ou feche e abra o navegador de novo.")
+        caixa.setAttribute(Qt.WA_DeleteOnClose)
+        caixa.show()

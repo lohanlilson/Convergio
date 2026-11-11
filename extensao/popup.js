@@ -11,7 +11,7 @@ async function iniciar() {
 
   const st = $("status");
   try {
-    const r = await fetch("http://127.0.0.1:47851/ping", { headers: { "X-Convergio": "1" } });
+    const r = await fetch("http://127.0.0.1:47851/ping", { headers: { "X-Convergio": "1", "X-Convergio-Extensao": chrome.runtime.getManifest().version } });
     const d = await r.json();
     st.textContent = d.capturar === false
       ? `Conectado (v${d.versao}) — captura desligada no programa`

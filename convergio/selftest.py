@@ -103,6 +103,13 @@ def testar_motor(log, tamanho=24 * 1024 * 1024):
         caso("pausar e retomar", "/arquivo.bin", 8, pausar_em=0.5)
         caso("quedas de conexão", "/falha", 16)
         caso("servidor sem Range", "/norange", 16)
+        # nome gigante (código no lugar do nome, como alguns sites fazem): tem que ser encurtado e funcionar
+        d = Download(base + "/arquivo.bin", pasta, 8, nome="VTN4q5w38fB7mI2HpCxs0KVFKN-" * 12)
+        d.iniciar()
+        d.aguardar(120)
+        ok = d.status == CONCLUIDO and len(d.nome) <= 150
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} nome longo demais encurtado ({len(d.nome)} caracteres) {d.erro}")
         if t16 * 3 > t1:
             falhas += 1
             log(f"ERRO aceleração insuficiente: 1 conexão {t1:.1f}s × 16 conexões {t16:.1f}s")

@@ -19,7 +19,10 @@ function navegador() {
 async function chamar(caminho, dados) {
   const opcoes = {
     method: dados ? "POST" : "GET",
-    headers: { "X-Convergio": "1", "X-Convergio-Navegador": navegador(), "Content-Type": "application/json" },
+    headers: {
+      "X-Convergio": "1", "X-Convergio-Navegador": navegador(), "Content-Type": "application/json",
+      "X-Convergio-Extensao": chrome.runtime.getManifest().version,
+    },
   };
   if (dados) opcoes.body = JSON.stringify(dados);
   const ctl = new AbortController();

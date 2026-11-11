@@ -10,6 +10,7 @@ Motor de download segmentado (estilo IDM).
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import re
 import threading
@@ -54,6 +55,34 @@ def fmt_tempo(s: float | None) -> str:
     return f"{h}h {m:02d}m" if h else (f"{m}m {s:02d}s" if m else f"{s}s")
 
 
+RESERVADOS = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+MAX_NOME = 150     # o Windows aceita até 255 caracteres por nome; sobra espaço para " (1)" e ".part.json"
+
+
+def parece_nome_de_arquivo(nome: str | None) -> bool:
+    """True se for um nome de arquivo de verdade (tem extensão e tamanho razoável), não um código do link."""
+    if not nome:
+        return False
+    base, ext = os.path.splitext(nome)
+    return bool(base) and 1 < len(ext) <= 10 and ext[1:].isalnum() and len(nome) <= MAX_NOME
+
+
+def nome_seguro(nome: str | None, tipo: str = "") -> str:
+    """Deixa o nome válido no Windows: sem caracteres proibidos, sem nomes reservados e com tamanho limitado."""
+    nome = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", nome or "").strip(" .")
+    base, ext = os.path.splitext(nome)
+    if not (1 < len(ext) <= 10 and ext[1:].isalnum()):
+        base, ext = nome, ""
+        adivinhada = mimetypes.guess_extension((tipo or "").split(";")[0].strip()) if tipo else None
+        if adivinhada and adivinhada not in (".bin", ".htm", ".html", ".txt"):
+            ext = adivinhada
+    if len(base) + len(ext) > MAX_NOME:
+        base = base[:MAX_NOME - len(ext)].rstrip(" .")
+    if base.upper() in RESERVADOS:
+        base = "_" + base
+    return (base or "download") + ext
+
+
 class Segmento:
     __slots__ = ("start", "end", "pos", "ativo")
 
@@ -79,7 +108,7 @@ class Download:
         self.url_final = self.url
         self.pasta = pasta
         self.conexoes = max(1, min(32, conexoes))
-        self.nome = nome
+        self.nome = nome_seguro(nome) if nome else None
         self.headers_extra = {k: v for k, v in (headers or {}).items() if v}   # cookies, referer… do navegador
         self.headers = {"User-Agent": UA, **self.headers_extra, "Accept-Encoding": "identity"}
         self.caminho: str | None = None
@@ -177,6 +206,7 @@ class Download:
                     self.tamanho = int(cl) if cl.isdigit() else None
                 if not self.nome:
                     self.nome = self._nome_arquivo(r)
+                self.nome = nome_seguro(self.nome, r.headers.get("Content-Type", ""))
             finally:
                 r.close()
 
@@ -196,8 +226,7 @@ class Download:
                     nome = m.group(1)
         if not nome:
             nome = unquote(os.path.basename(urlparse(r.url).path))
-        nome = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", nome).strip(" .")
-        return nome or "download"
+        return nome_seguro(nome, r.headers.get("Content-Type", ""))
 
     def _caminho_livre(self):
         base, ext = os.path.splitext(self.nome)

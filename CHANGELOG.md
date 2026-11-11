@@ -1,5 +1,10 @@
 # Novidades do Convergio
 
+## 1.1.4
+- Corrigido o erro "Invalid argument" em sites que usam um código enorme no lugar do nome do arquivo: o nome agora vem do servidor e, se for grande demais, é encurtado.
+- A janela abre centralizada na tela.
+- O Convergio avisa quando o navegador ainda usa uma versão antiga da extensão e mostra como recarregar.
+
 ## 1.1.3
 - **Atualização mais robusta:** antes de copiar, o instalador fecha qualquer processo que esteja rodando de dentro da pasta do Convergio e libera arquivos que continuem em uso, em vez de desfazer a instalação.
 - As próximas atualizações **mostram o erro na tela**, com a opção de tentar de novo, se algo impedir a instalação.
