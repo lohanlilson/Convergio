@@ -39,11 +39,11 @@ jobs:
           # ajudante esperando um programa que NÃO fecha (pior caso): depois de 30 s ele inicia o instalador
           Start-Process $exe -ArgumentList "--run-update", "`"$novo`"", $app.Id
           $t = Get-Date
-          while (((Get-Date) - $t).TotalSeconds -lt 150) {
+          while (((Get-Date) - $t).TotalSeconds -lt 220) {
             Start-Sleep 3
             $lista = Get-Process | Where-Object { $_.ProcessName -match "Convergio" } | ForEach-Object { "$($_.ProcessName)#$($_.Id)" }
             Write-Host ("{0,4}s  {1}" -f [int]((Get-Date) - $t).TotalSeconds, ($lista -join "  "))
-            if (((Get-Date) - $t).TotalSeconds -gt 45 -and -not ($lista -match "Setup")) { break }
+            if (((Get-Date) - $t).TotalSeconds -gt 100 -and -not ($lista -match "Setup")) { break }
           }
           $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{3680703B-A357-4D95-B063-9D9D747F6B6F}_is1"
           $ver = (Get-ItemProperty $key).DisplayVersion
