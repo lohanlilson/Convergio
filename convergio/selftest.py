@@ -154,6 +154,9 @@ def executar(argv):
     if sys.platform == "win32":
         # encerra na hora, sem descarregar as DLLs do Qt (threads de rede ainda podem estar abertas)
         import ctypes
+        from ctypes import wintypes
         k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = wintypes.HANDLE
+        k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
         k.TerminateProcess(k.GetCurrentProcess(), codigo)
     os._exit(codigo)
