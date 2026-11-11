@@ -61,7 +61,11 @@ def servidor(dados: bytes):
                 if espera > 0:
                     time.sleep(espera)
 
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    class Servidor(ThreadingHTTPServer):
+        def handle_error(self, request, client_address):
+            pass  # conexões interrompidas de propósito (pausa/quedas) não são erro do teste
+
+    srv = Servidor(("127.0.0.1", 0), H)
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, f"http://127.0.0.1:{srv.server_address[1]}"
@@ -140,9 +144,16 @@ def executar(argv):
         import traceback
         falhas += 1
         log("ERRO " + "".join(traceback.format_exception(e)))
-    log("RESULTADO: " + ("tudo certo" if not falhas else f"{falhas} falha(s)"))
+    codigo = 1 if falhas else 0
+    log("RESULTADO: " + ("tudo certo" if not falhas else f"{falhas} falha(s)") + f" (código {codigo})")
     if saida:
         with open(saida, "w", encoding="utf-8") as f:
             f.write("\n".join(linhas) + "\n")
     sys.stdout.flush()
-    os._exit(1 if falhas else 0)
+    sys.stderr.flush()
+    if sys.platform == "win32":
+        # encerra na hora, sem descarregar as DLLs do Qt (threads de rede ainda podem estar abertas)
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.TerminateProcess(k.GetCurrentProcess(), codigo)
+    os._exit(codigo)

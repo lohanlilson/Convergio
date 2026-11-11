@@ -53,10 +53,13 @@ jobs:
 
       - name: Autoteste no código-fonte
         if: steps.versao.outputs.publicar == 'sim'
+        shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
           PYTHONIOENCODING: utf-8
-        run: python main.py --selftest selftest-fonte.txt
+        run: |
+          c=0; python main.py --selftest selftest-fonte.txt || c=$?
+          echo "Código de saída: $c"; exit $c
 
       - name: Gerar executável e instalador
         if: steps.versao.outputs.publicar == 'sim'
