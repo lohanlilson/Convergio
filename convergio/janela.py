@@ -676,8 +676,23 @@ class Janela(QMainWindow):
     # ------------------------------------------------------------ navegador e bandeja
     def receber_pedido(self, info: dict):
         url = info.get("url", "")
-        if any(d.url == url and d.status != CONCLUIDO for d in self.downloads):
+        existente = next((i for i, d in enumerate(self.downloads) if d.url == url and d.status != CONCLUIDO), None)
+        if existente is not None:
+            d = self.downloads[existente]
+            if not d.rodando and d.status in (ERRO, PAUSADO):
+                # atualiza cookies/referer vindos do navegador (os antigos podem ter expirado) e retoma
+                novos = headers_do_pedido(info)
+                if novos:
+                    d.headers_extra.update(novos)
+                    d.headers.update(novos)
+                d.status = NA_FILA
+                msg = f"Esse download já estava na lista — retomando: {d.nome or url}"
+            else:
+                msg = f"Esse download já está em andamento: {d.nome or url}"
             self.mostrar_janela()
+            self.tab.selectRow(existente)
+            self.statusBar().showMessage(msg, 8000)
+            self.tray.showMessage(APP_NAME, msg, icone_app(), 4000)
             return
         if self.settings.value("perguntar_navegador", "true") == "false":
             nome = info.get("nome") if parece_nome_de_arquivo(info.get("nome")) else None
@@ -858,4 +873,7 @@ class Janela(QMainWindow):
             "Abra chrome://extensions (no Edge, edge://extensions) e clique no botão ↻ (recarregar) no cartão "
             "do Convergio, ou feche e abra o navegador de novo.")
         caixa.setAttribute(Qt.WA_DeleteOnClose)
+        caixa.setWindowModality(Qt.NonModal)
+        caixa.setModal(False)
+        self._caixa_extensao = caixa          # mantém a referência (senão a janela some na hora)
         caixa.show()

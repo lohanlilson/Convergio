@@ -1,5 +1,10 @@
 # Novidades do Convergio
 
+## 1.1.5
+- O aviso de "extensão desatualizada" não trava mais a janela do download.
+- Se o navegador mandar um link que já está na lista (por exemplo, um que deu erro), o Convergio retoma esse download, com os cookies novos do navegador, e avisa; antes, não acontecia nada.
+- Downloads que deram erro por nome de arquivo longo demais voltam a funcionar ao clicar em Retomar.
+
 ## 1.1.4
 - Corrigido o erro "Invalid argument" em sites que usam um código enorme no lugar do nome do arquivo: o nome agora vem do servidor e, se for grande demais, é encurtado.
 - A janela abre centralizada na tela.

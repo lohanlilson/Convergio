@@ -377,7 +377,12 @@ class Download:
                 antigo = self.caminho
                 self._sondar()
                 os.makedirs(self.pasta, exist_ok=True)
-                self.caminho = antigo or os.path.join(self.pasta, self.nome)
+                # reaproveita o caminho anterior só se o nome não mudou (ex.: nome longo demais foi corrigido)
+                if antigo and os.path.basename(antigo) == self.nome:
+                    self.caminho = antigo
+                else:
+                    antigo = None
+                    self.caminho = os.path.join(self.pasta, self.nome)
                 if not (self.aceita_range and self._carregar_estado()):
                     if antigo and os.path.exists(self._part):
                         os.remove(self._part)          # sem Range não dá para retomar
