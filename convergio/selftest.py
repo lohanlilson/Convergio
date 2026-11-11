@@ -162,6 +162,83 @@ def testar_integracao(log, app):
     return falhas
 
 
+def testar_video(log):
+    """Vídeo em streaming (HLS). Sempre: baixa os pedaços de uma lista. Com CONVERGIO_TESTE_VIDEO=1: baixa o
+    FFmpeg, gera um vídeo de verdade, baixa e junta em .mp4."""
+    import functools
+    import subprocess
+    from http.server import SimpleHTTPRequestHandler
+    from .motor import CONCLUIDO
+    from .video import SEM_JANELA, DownloadHLS, baixar_ffmpeg, caminho_ffmpeg
+    falhas = 0
+    raiz = tempfile.mkdtemp(prefix="convergio-video-")
+    saida = os.path.join(raiz, "saida")
+
+    class H(SimpleHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(H, directory=raiz))
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        # 1) pedaços falsos: confere ordem e conteúdo (a junção é só concatenar)
+        rnd = random.Random(3)
+        partes = [rnd.randbytes(40000) for _ in range(30)]
+        linhas = ["#EXTM3U", "#EXT-X-TARGETDURATION:2"]
+        for i, b in enumerate(partes):
+            with open(os.path.join(raiz, f"p{i}.ts"), "wb") as f:
+                f.write(b)
+            linhas += ["#EXTINF:2.0,", f"p{i}.ts"]
+        with open(os.path.join(raiz, "lista.m3u8"), "w") as f:
+            f.write("\n".join(linhas + ["#EXT-X-ENDLIST"]))
+
+        class Falso(DownloadHLS):
+            def _juntar(self, pasta):
+                with open(self.caminho, "wb") as out:
+                    for it in self.faixas[0].itens:
+                        with open(os.path.join(pasta, it["arquivo"]), "rb") as f:
+                            out.write(f.read())
+
+        d = Falso(base + "/lista.m3u8", saida, 8, nome="teste")
+        d.iniciar()
+        d.aguardar(60)
+        ok = d.status == CONCLUIDO and open(d.caminho, "rb").read() == b"".join(partes)
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} vídeo em streaming: 30 pedaços baixados em ordem {d.erro}")
+
+        # 2) completo, com FFmpeg de verdade
+        if os.environ.get("CONVERGIO_TESTE_VIDEO") == "1":
+            ff = caminho_ffmpeg() or baixar_ffmpeg()
+            os.makedirs(os.path.join(raiz, "v"))
+            for codec in (["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"], ["-c:v", "mpeg2video"]):
+                r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                                    "testsrc=size=320x180:rate=10", "-f", "lavfi", "-i", "sine=frequency=440",
+                                    "-t", "8", *codec, "-c:a", "aac", "-f", "hls", "-hls_time", "2",
+                                    "-hls_playlist_type", "vod", "v/index.m3u8"],
+                                   cwd=raiz, capture_output=True, text=True, creationflags=SEM_JANELA)
+                if r.returncode == 0:
+                    break
+            d = DownloadHLS(base + "/v/index.m3u8", saida, 8, nome="completo")
+            d.iniciar()
+            d.aguardar(120)
+            dur = ""
+            if d.status == CONCLUIDO:
+                p = subprocess.run([ff, "-hide_banner", "-i", d.caminho], capture_output=True, text=True,
+                                   creationflags=SEM_JANELA)
+                m = re.search(r"Duration: 00:00:(\d+)", p.stderr)
+                dur = m.group(1) if m else ""
+            ok = d.status == CONCLUIDO and dur in ("07", "08") and "Audio:" in p.stderr and "Video:" in p.stderr
+            falhas += not ok
+            log(f"{'OK ' if ok else 'ERRO'} vídeo de verdade baixado e juntado em .mp4 com o FFmpeg ({dur}s) "
+                f"{d.erro} {r.stderr[-200:] if not ok else ''}")
+    finally:
+        srv.shutdown()
+        shutil.rmtree(raiz, ignore_errors=True)
+    return falhas
+
+
 def executar(argv):
     i = argv.index("--selftest")
     saida = argv[i + 1] if len(argv) > i + 1 else None
@@ -177,6 +254,7 @@ def executar(argv):
     falhas = 0
     try:
         falhas += testar_motor(log)
+        falhas += testar_video(log)
         from PySide6.QtWidgets import QApplication
         from . import tema
         from .janela import Janela

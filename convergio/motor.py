@@ -145,6 +145,14 @@ class Segmento:
 
 
 class Download:
+    tipo = "arquivo"
+    etapa = ""            # texto extra de status (usado pelos vídeos: "Juntando o vídeo")
+
+    @property
+    def total_mapa(self):
+        """Tamanho total representado pela barra de trechos."""
+        return self.tamanho
+
     def __init__(self, url: str, pasta: str, conexoes: int = 16,
                  nome: str | None = None, headers: dict | None = None, por_tipo: bool = False):
         self.url = url.strip()

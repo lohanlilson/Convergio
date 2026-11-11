@@ -53,11 +53,13 @@ def sha256(caminho):
     return h.hexdigest()
 
 
-def executar_instalador(caminho, versao_alvo=""):
+def executar_instalador(caminho, versao_alvo="", pequena=False):
     """Agenda o instalador para depois que o programa fechar (ele reabre o programa ao terminar)."""
     try:
         with open(MARCADOR, "w", encoding="utf-8") as f:
-            json.dump({"de": __version__, "para": versao_alvo, "instalador": caminho, "quando": time.time()}, f)
+            # se a atualização pequena falhar, a instalação manual usa o instalador completo (baixado do site)
+            json.dump({"de": __version__, "para": versao_alvo, "instalador": "" if pequena else caminho,
+                       "quando": time.time()}, f)
     except OSError:
         pass
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
@@ -146,7 +148,9 @@ class DialogoAtualizacao(QDialog):
         self.janela, self.info = janela, info
         self.setWindowTitle(f"Atualização do {APP_NAME}")
         self.setMinimumWidth(500)
-        inst = info["instalador"]
+        pequena = (info.get("patches") or {}).get(__version__)
+        inst = pequena or info["instalador"]
+        self.pequena = bool(pequena)
         self.url, self.sha = inst["url"], inst["sha256"]
         lay = QVBoxLayout(self)
         lay.addWidget(QLabel(f"<h3 style='margin:0'>Nova versão disponível: {info['versao']}</h3>"
@@ -156,7 +160,8 @@ class DialogoAtualizacao(QDialog):
         notas.setMaximumHeight(200)
         lay.addWidget(QLabel("<b>Novidades</b>"))
         lay.addWidget(notas)
-        dica = QLabel(f"Será baixado o instalador ({fmt_bytes(inst.get('tamanho'))}). "
+        oque = "Será baixada só a parte que mudou" if pequena else "Será baixado o instalador"
+        dica = QLabel(f"{oque} ({fmt_bytes(inst.get('tamanho'))}). "
                       f"O {APP_NAME} será fechado, atualizado e aberto de novo — downloads em andamento "
                       "são pausados e continuam depois.")
         dica.setWordWrap(True)
@@ -214,7 +219,7 @@ class DialogoAtualizacao(QDialog):
                 return
             self.accept()
             self.janela.fechar_para_atualizar()
-            executar_instalador(d.caminho, self.info["versao"])
+            executar_instalador(d.caminho, self.info["versao"], self.pequena)
             QApplication.instance().quit()
 
     def _falhou(self, erro):

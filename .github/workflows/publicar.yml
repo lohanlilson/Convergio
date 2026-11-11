@@ -58,6 +58,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           PYTHONIOENCODING: utf-8
+          CONVERGIO_TESTE_VIDEO: "1"
         run: |
           c=0; python main.py --selftest selftest-fonte.txt || c=$?
           echo "Código de saída: $c"; exit $c
@@ -69,6 +70,8 @@ jobs:
       - name: Autoteste do executável gerado (sem Python)
         if: steps.versao.outputs.publicar == 'sim'
         shell: pwsh
+        env:
+          CONVERGIO_TESTE_VIDEO: "1"
         run: |
           $p = Start-Process -FilePath "dist\Convergio\Convergio.exe" -ArgumentList "--selftest","selftest.txt" -PassThru; $p.WaitForExit()
           Get-Content selftest.txt

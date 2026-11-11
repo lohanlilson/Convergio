@@ -1,62 +1,30 @@
-# Reproduz o "desfazendo alterações": outro processo mantém uma DLL do Convergio carregada durante a
-# atualização. O instalador publicado (1.1.2) deve falhar; o gerado deste código deve instalar mesmo assim.
+# Testa, sem publicar, a atualização pequena (só os arquivos que mudaram) com uma versão de teste 9.9.9.
 name: Testar atualização
 
 on:
   push:
     branches: [main]
-    paths: [".github/workflows/testar-atualizacao.yml", "installer/**", "convergio/atualizador.py"]
+    paths: [".github/workflows/testar-atualizacao.yml", "installer/**", "tools/**", "build.py"]
 
 jobs:
   atualizar:
     runs-on: windows-latest
     timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        instalador: ["publicado-1.1.2", "novo-9.9.9"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - name: Gerar instalador 9.9.9 deste código
-        if: matrix.instalador == 'novo-9.9.9'
+      - name: Versão anterior (base)
+        shell: pwsh
+        run: ./tools/ci_base.ps1
+      - name: Gerar 9.9.9 com atualização pequena
         shell: bash
         run: |
           sed -i 's/__version__ = ".*"/__version__ = "9.9.9"/' convergio/__init__.py
           python -m pip install -q -r requirements.txt pyinstaller
           if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup -y --no-progress; fi
-          python build.py > build.log 2>&1 || (tail -40 build.log; exit 1)
-          cp Saida/Convergio-Setup-9.9.9.exe nova.exe
-      - name: Instalar 1.1.2
+          python build.py --publicar --base-dir base-anterior --base-versao "$BASE_VERSAO" > build.log 2>&1 || (tail -60 build.log; exit 1)
+          grep -E "arquivo\(s\) mudaram|Atualiza" build.log | head; cat Saida/versao.json | head -30
+      - name: Testar a atualização pequena
         shell: pwsh
-        run: |
-          Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v1.1.2/Convergio-Setup-1.1.2.exe" -OutFile antiga.exe
-          if (-not (Test-Path nova.exe)) { Copy-Item antiga.exe nova.exe }
-          $p = Start-Process .\antiga.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru; $p.WaitForExit()
-          Start-Sleep 5; Get-Process Convergio -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
-      - name: Atualizar com uma DLL do Convergio presa em outro processo
-        shell: pwsh
-        run: |
-          $dll = (Get-ChildItem "C:\Program Files\Convergio\_internal\python3*.dll" | Where-Object Name -match "python3\d+\.dll").FullName
-          Write-Host "DLL que ficará presa: $dll"
-          $script = "Add-Type -Namespace W -Name K -MemberDefinition '[DllImport(""kernel32.dll"")] public static extern IntPtr LoadLibrary(string p);'; [W.K]::LoadLibrary('$dll') | Out-Null; Start-Sleep 600"
-          $preso = Start-Process powershell -ArgumentList "-NoProfile","-Command",$script -PassThru -WindowStyle Hidden
-          Start-Sleep 6
-          Write-Host "Processo segurando a DLL: powershell#$($preso.Id)"
-          $log = "$env:TEMP\convergio-teste.log"
-          # mesmos parâmetros que a atualização automática da 1.1.2 usa
-          $p = Start-Process .\nova.exe -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS',"/LOG=`"$log`"" -PassThru
-          $p.WaitForExit()
-          $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{3680703B-A357-4D95-B063-9D9D747F6B6F}_is1"
-          Write-Host "=== Código de saída: $($p.ExitCode) | versão instalada: $((Get-ItemProperty $key).DisplayVersion)"
-          Get-Content $log | Select-String "rror|Abort|ollback|succeeded|Message box|in use|em uso|renomeado|Defaulting|Rolling" | Select-Object -First 30
-          Write-Host "--- sobras .antigo:"; Get-ChildItem "C:\Program Files\Convergio" -Recurse -Filter *.antigo | ForEach-Object FullName
-          Stop-Process -Id $preso.Id -Force
-          if ("${{ matrix.instalador }}" -eq "novo-9.9.9") {
-            Start-Sleep 2
-            $s = Start-Process "C:\Program Files\Convergio\Convergio.exe" -ArgumentList "--selftest","st.txt" -PassThru; $s.WaitForExit()
-            Get-Content st.txt | Select-Object -Last 3
-            Write-Host "--- sobras .antigo depois de abrir o programa:"; Get-ChildItem "C:\Program Files\Convergio" -Recurse -Filter *.antigo | ForEach-Object FullName
-            if ((Get-ItemProperty $key).DisplayVersion -ne "9.9.9" -or $s.ExitCode -ne 0) { Write-Error "Falhou"; exit 1 }
-          }
+        run: ./tools/ci_testar_patch.ps1 -Versao 9.9.9

@@ -146,3 +146,122 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     });
   }
 });
+
+// ---------------------------------------------------------------- vídeos nas páginas
+// Observa as respostas de cada aba e guarda os vídeos encontrados: listas de streaming (.m3u8) e arquivos
+// de vídeo/áudio diretos. O popup da extensão mostra a lista com o botão "Baixar".
+// Não captura YouTube (os termos do serviço não permitem) nem vídeos com proteção contra cópia (DRM).
+const SITES_FORA = /(^|\.)(youtube\.com|youtu\.be|googlevideo\.com|youtube-nocookie\.com)$/i;
+const TIPOS_LISTA = /mpegurl/i;
+const TIPOS_MIDIA = /^(video|audio)\//i;
+const PEDACO = /\.(ts|m4s|m4f|aac|vtt|key)(\?|$)/i;
+
+function chaveAba(tabId) { return "midias_" + tabId; }
+
+async function midiasDaAba(tabId) {
+  const k = chaveAba(tabId);
+  return (await chrome.storage.session.get({ [k]: [] }))[k];
+}
+
+async function atualizarSelo(tabId) {
+  const n = (await midiasDaAba(tabId)).length;
+  chrome.action.setBadgeBackgroundColor({ color: "#6d3cf0" }).catch(() => {});
+  chrome.action.setBadgeText({ tabId, text: n ? String(n) : "" }).catch(() => {});
+}
+
+async function classificarLista(url) {
+  // lista principal (tem as qualidades), lista de uma qualidade, ou transmissão ao vivo
+  try {
+    const r = await fetch(url, { credentials: "include" });
+    if (!r.ok) return { classe: "desconhecida" };
+    const t = await r.text();
+    if (t.includes("#EXT-X-STREAM-INF")) {
+      const filhas = [];
+      const linhas = t.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+      linhas.forEach((l, i) => {
+        if (l.startsWith("#EXT-X-STREAM-INF") && linhas[i + 1]) filhas.push(new URL(linhas[i + 1], r.url).href);
+        const m = l.startsWith("#EXT-X-MEDIA") && l.match(/URI="([^"]+)"/);
+        if (m) filhas.push(new URL(m[1], r.url).href);
+      });
+      const alturas = [...t.matchAll(/RESOLUTION=\d+x(\d+)/g)].map((m) => Number(m[1]));
+      return { classe: "principal", filhas, qualidade: alturas.length ? Math.max(...alturas) + "p" : "" };
+    }
+    if (!t.includes("#EXTINF")) return { classe: "desconhecida" };
+    if (!t.includes("#EXT-X-ENDLIST")) return { classe: "ao-vivo" };
+    if (/METHOD=(?!NONE|AES-128)/.test(t)) return { classe: "protegida" };
+    const dur = [...t.matchAll(/#EXTINF:([\d.]+)/g)].reduce((a, m) => a + Number(m[1]), 0);
+    return { classe: "simples", duracao: Math.round(dur) };
+  } catch (e) {
+    return { classe: "desconhecida" };
+  }
+}
+
+async function registrarMidia(tabId, item) {
+  const k = chaveAba(tabId);
+  let lista = await midiasDaAba(tabId);
+  if (lista.some((m) => m.url === item.url)) return;
+  if (item.tipo === "hls") {
+    if (lista.some((m) => (m.filhas || []).includes(item.url))) return;      // qualidade de uma lista já registrada
+    const c = await classificarLista(item.url);
+    if (c.classe === "ao-vivo" || c.classe === "protegida" || c.classe === "desconhecida") return;
+    Object.assign(item, c);
+    lista = await midiasDaAba(tabId);
+    if (lista.some((m) => m.url === item.url || (m.filhas || []).includes(item.url))) return;
+    if (c.classe === "principal") lista = lista.filter((m) => !c.filhas.includes(m.url));
+  }
+  lista.push(item);
+  await chrome.storage.session.set({ [k]: lista.slice(-15) });
+  atualizarSelo(tabId);
+}
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (d) => {
+    if (d.tabId < 0 || d.statusCode < 200 || d.statusCode >= 300) return;
+    let host = "";
+    try { host = new URL(d.url).hostname; } catch (e) { return; }
+    if (SITES_FORA.test(host) || (d.initiator && SITES_FORA.test(new URL(d.initiator).hostname))) return;
+    const cab = Object.fromEntries((d.responseHeaders || []).map((h) => [h.name.toLowerCase(), h.value || ""]));
+    const tipo = cab["content-type"] || "";
+    const caminho = d.url.split("?")[0];
+    if (TIPOS_LISTA.test(tipo) || /\.m3u8$/i.test(caminho)) {
+      registrarMidia(d.tabId, { tipo: "hls", url: d.url });
+    } else if (TIPOS_MIDIA.test(tipo) && !/mp2t/i.test(tipo) && !PEDACO.test(d.url)) {
+      const total = Number((cab["content-range"] || "").split("/")[1]) || Number(cab["content-length"]) || 0;
+      if (total >= 1024 * 1024) registrarMidia(d.tabId, { tipo: "arquivo", url: d.url, tamanho: total, mime: tipo.split(";")[0] });
+    }
+  },
+  { urls: ["http://*/*", "https://*/*"], types: ["xmlhttprequest", "media", "other"] },
+  ["responseHeaders"]
+);
+
+// página nova na aba: esquece os vídeos da página anterior
+chrome.webNavigation.onCommitted.addListener((d) => {
+  if (d.frameId === 0 && d.transitionType !== "auto_subframe") {
+    chrome.storage.session.remove(chaveAba(d.tabId)).then(() => atualizarSelo(d.tabId));
+  }
+});
+chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(chaveAba(tabId)));
+
+function nomeParaVideo(titulo, item) {
+  const base = (titulo || "video").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "video";
+  if (item.tipo === "hls") return base + ".mp4";
+  const ext = (item.url.split("?")[0].match(/\.([a-z0-9]{2,4})$/i) || [])[1] || (item.mime || "").split("/")[1] || "mp4";
+  return base + "." + ext;
+}
+
+async function baixarMidia(item, tab) {
+  return enviar(item.url, {
+    tipo: item.tipo === "hls" ? "hls" : undefined,
+    referrer: (tab && tab.url) || "",
+    nome: nomeParaVideo(tab && tab.title, item),
+    tamanho: item.tamanho || null,
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, remetente, responder) => {
+  if (msg && msg.acao === "baixar-midia") {
+    chrome.tabs.get(msg.tabId).then((tab) => baixarMidia(msg.item, tab)).then((r) => responder({ ok: !!r }))
+      .catch(() => responder({ ok: false }));
+    return true;
+  }
+});

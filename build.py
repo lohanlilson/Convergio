@@ -105,7 +105,69 @@ def sha256(caminho):
     return h.hexdigest()
 
 
-def publicar(ver):
+def arvore(pasta):
+    """{caminho relativo: sha256} de uma pasta instalada (sem o desinstalador e sobras)."""
+    saida = {}
+    for raiz, _, arquivos in os.walk(pasta):
+        for nome in arquivos:
+            if nome.lower().startswith("unins") or nome.endswith(".antigo"):
+                continue
+            c = os.path.join(raiz, nome)
+            saida[os.path.relpath(c, pasta).replace("\\", "/")] = sha256(c)
+    return saida
+
+
+def arvore_nova():
+    """{caminho relativo: caminho real} do que o instalador completo coloca na pasta do programa."""
+    saida = {}
+    for origem, prefixo in ((DIST, ""), (os.path.join(ROOT, "extensao"), "extensao/")):
+        for raiz, _, arquivos in os.walk(origem):
+            for nome in arquivos:
+                c = os.path.join(raiz, nome)
+                saida[prefixo + os.path.relpath(c, origem).replace("\\", "/")] = c
+    return saida
+
+
+def patch(ver, base_dir, base_ver):
+    """Instalador pequeno só com os arquivos que mudaram desde a versão anterior."""
+    etapa(f"Gerando atualização pequena {base_ver} -> {ver}")
+    antigos, novos = arvore(base_dir), arvore_nova()
+    mudados = [rel for rel, c in novos.items() if antigos.get(rel) != sha256(c)]
+    removidos = [rel for rel in antigos if rel not in novos]
+    preparo = os.path.join(BUILD, "patch")
+    shutil.rmtree(preparo, ignore_errors=True)
+    for rel in mudados:
+        destino = os.path.join(preparo, rel)
+        os.makedirs(os.path.dirname(destino), exist_ok=True)
+        shutil.copy2(novos[rel], destino)
+    with open(os.path.join(BUILD, "patch_remover.iss"), "w", encoding="utf-8-sig") as f:
+        f.write("[InstallDelete]\n")
+        for rel in removidos:
+            f.write('Type: files; Name: "{app}\\%s"\n' % rel.replace("/", "\\"))
+    total = sum(os.path.getsize(novos[r]) for r in mudados)
+    print(f"{len(mudados)} arquivo(s) mudaram ({total / 1048576:.1f} MB), {len(removidos)} removido(s), "
+          f"{len(novos) - len(mudados)} iguais")
+    m = meta()
+    subprocess.run([achar_iscc(), f"/DAppVersion={ver}", f"/DBaseVersion={base_ver}", f"/DSourceDir={preparo}",
+                    f"/DAppPublisher={m['AUTHOR']}", os.path.join(ROOT, "installer", "patch.iss")],
+                   cwd=os.path.join(ROOT, "installer"), check=True)
+    return f"Convergio-Atualizacao-{base_ver}-para-{ver}.exe"
+
+
+def conferir(pasta):
+    """Confere se uma pasta instalada está idêntica ao que o instalador completo desta versão coloca."""
+    instalado, novos = arvore(pasta), arvore_nova()
+    diferentes = [r for r, c in novos.items() if instalado.get(r) != sha256(c)]
+    sobrando = [r for r in instalado if r not in novos]
+    for r in diferentes[:20]:
+        print("DIFERENTE ou faltando:", r)
+    for r in sobrando[:20]:
+        print("SOBRANDO:", r)
+    print(f"Conferência: {len(novos)} arquivos, {len(diferentes)} diferentes, {len(sobrando)} sobrando")
+    return not diferentes and not sobrando
+
+
+def publicar(ver, arquivo_patch=None, base_ver=None):
     """versao.json (lido pelo programa para a atualização automática) e NOTAS.md (texto da Release)."""
     etapa("Gerando arquivos de publicação")
     repo = os.environ.get("GITHUB_REPOSITORY") or meta()["UPDATE_REPO"]
@@ -114,6 +176,10 @@ def publicar(ver):
     info = {"versao": ver, "data": datetime.date.today().isoformat(), "novidades": notas(ver),
             "instalador": {"url": f"https://github.com/{repo}/releases/download/v{ver}/{setup}",
                            "sha256": sha256(p), "tamanho": os.path.getsize(p)}}
+    if arquivo_patch:
+        c = os.path.join(SAIDA, arquivo_patch)
+        info["patches"] = {base_ver: {"url": f"https://github.com/{repo}/releases/download/v{ver}/{arquivo_patch}",
+                                      "sha256": sha256(c), "tamanho": os.path.getsize(c)}}
     # pacote da extensão para enviar às lojas (Edge Add-ons, Chrome Web Store)
     shutil.make_archive(os.path.join(SAIDA, "Convergio-extensao"), "zip", os.path.join(ROOT, "extensao"))
     with open(os.path.join(SAIDA, "versao.json"), "w", encoding="utf-8") as f:
@@ -127,14 +193,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sem-instalador", action="store_true")
     ap.add_argument("--publicar", action="store_true")
+    ap.add_argument("--base-dir", help="pasta com a versão anterior instalada (gera a atualização pequena)")
+    ap.add_argument("--base-versao")
+    ap.add_argument("--conferir", help="só confere se a pasta instalada está idêntica a esta versão")
     a = ap.parse_args()
     ver = meta()["__version__"]
+    if a.conferir:
+        sys.exit(0 if conferir(a.conferir) else 1)
     shutil.rmtree(SAIDA, ignore_errors=True)
     pyinstaller(ver)
     if not a.sem_instalador:
         instalador(ver)
+        arquivo_patch = None
+        if a.base_dir and a.base_versao and os.path.isdir(a.base_dir) and a.base_versao != ver:
+            arquivo_patch = patch(ver, a.base_dir, a.base_versao)
         if a.publicar:
-            publicar(ver)
+            publicar(ver, arquivo_patch, a.base_versao)
     etapa("Concluído")
     print(r"Executável:  dist\Convergio\Convergio.exe")
     if os.path.isdir(SAIDA):

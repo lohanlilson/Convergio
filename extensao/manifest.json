@@ -4,7 +4,7 @@
   "short_name": "Convergio",
   "version": "1.2.0",
   "description": "Envia os downloads do navegador para o Convergio, o acelerador de downloads.",
-  "permissions": ["downloads", "cookies", "contextMenus", "storage", "notifications", "alarms"],
+  "permissions": ["downloads", "cookies", "contextMenus", "storage", "notifications", "alarms", "webRequest", "webNavigation", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "action": {

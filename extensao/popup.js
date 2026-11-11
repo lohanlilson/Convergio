@@ -22,4 +22,48 @@ async function iniciar() {
     st.className = "status erro";
   }
 }
+
+function tamanho(b) {
+  return b >= 1 << 30 ? (b / (1 << 30)).toFixed(2) + " GB" : (b / (1 << 20)).toFixed(1) + " MB";
+}
+
+function duracao(s) {
+  const m = Math.floor(s / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}min` : `${m}min ${s % 60}s`;
+}
+
+async function listarVideos() {
+  const parametro = Number(new URLSearchParams(location.search).get("tabId"));      // usado nos testes
+  const tabId = parametro || (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+  if (!tabId) return;
+  const k = "midias_" + tabId;
+  const lista = (await chrome.storage.session.get({ [k]: [] }))[k];
+  if (!lista.length) return;
+  $("videos").hidden = false;
+  for (const item of lista) {
+    const li = document.createElement("li");
+    const div = document.createElement("div");
+    const nome = document.createElement("div");
+    nome.className = "nome";
+    nome.textContent = item.tipo === "hls" ? "Vídeo (streaming)" : decodeURIComponent(item.url.split("?")[0].split("/").pop() || "vídeo");
+    const det = document.createElement("div");
+    det.className = "det";
+    det.textContent = item.tipo === "hls"
+      ? [item.qualidade, item.duracao ? duracao(item.duracao) : "", new URL(item.url).hostname].filter(Boolean).join(" · ")
+      : [tamanho(item.tamanho), item.mime].filter(Boolean).join(" · ");
+    div.append(nome, det);
+    const bt = document.createElement("button");
+    bt.textContent = "Baixar";
+    bt.addEventListener("click", async () => {
+      bt.disabled = true;
+      const r = await chrome.runtime.sendMessage({ acao: "baixar-midia", tabId, item });
+      bt.textContent = r && r.ok ? "Enviado ✓" : "Abra o Convergio";
+      if (!(r && r.ok)) bt.disabled = false;
+    });
+    li.append(div, bt);
+    $("lista").append(li);
+  }
+}
+
 iniciar();
+listarVideos();

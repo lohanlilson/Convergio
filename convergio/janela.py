@@ -21,6 +21,7 @@ from . import APP_NAME, AUTHOR, COPYRIGHT, EMAIL, __version__, resource, tema
 from .atualizador import Atualizador, avisar_falha, resultado_da_ultima_atualizacao
 from .integracao import Servidor
 from .recursos import DialogoConfiguracoes, Recursos, RE_LINKS
+from .video import criar_download
 from .motor import (BAIXANDO, CONCLUIDO, CONECTANDO, ERRO, NA_FILA, PAUSADO, Download, fmt_bytes, fmt_tempo,
                     parece_nome_de_arquivo)
 
@@ -58,8 +59,8 @@ class BarraSegmentos(QWidget):
         if d and d.status == CONCLUIDO:
             p.setBrush(QColor(c["accent"]))
             p.drawRoundedRect(r, 6, 6)
-        elif d and d.tamanho:
-            w = r.width() / d.tamanho
+        elif d and d.total_mapa:
+            w = r.width() / d.total_mapa
             for start, end, pos, ativo in d.mapa():
                 x = r.x() + start * w
                 feito = max(0, min(pos, end + 1) - start) * w
@@ -92,7 +93,8 @@ class DialogoNovoDownload(QDialog):
                                                                            Qt.SmoothTransformation))
         topo.addWidget(logo)
         origem = info.get("navegador") or "navegador"
-        topo.addWidget(QLabel(f"<b style='font-size:15px'>Download capturado do {origem}</b>"))
+        oque = "Vídeo capturado" if info.get("tipo") == "hls" else "Download capturado"
+        topo.addWidget(QLabel(f"<b style='font-size:15px'>{oque} do {origem}</b>"))
         topo.addStretch()
         lay.addLayout(topo)
         form = QFormLayout()
@@ -140,7 +142,7 @@ class DialogoNovoDownload(QDialog):
             self.janela.act_perguntar.setChecked(False)
         nome = self.ed_nome.text().strip() or None
         self.janela.adicionar(self.info["url"], nome=nome, headers=headers_do_pedido(self.info),
-                              pasta=self.ed_pasta.text().strip(), avisar_duplicado=False)
+                              pasta=self.ed_pasta.text().strip(), avisar_duplicado=False, tipo=self.info.get("tipo"))
         self.accept()
 
     def mostrar(self):
@@ -466,7 +468,8 @@ class Janela(QMainWindow, Recursos):
             self.adicionar_varios(t)
 
     def adicionar(self, url: str | None = None, nome: str | None = None, headers: dict | None = None,
-                  pasta: str | None = None, avisar_duplicado: bool = True, pausado: bool = False):
+                  pasta: str | None = None, avisar_duplicado: bool = True, pausado: bool = False,
+                  tipo: str | None = None):
         url = (url or self.ed_url.text()).strip()
         if not RE_URL.match(url) and len(RE_LINKS.findall(url)) > 1:      # vários links colados no campo
             self.ed_url.clear()
@@ -483,7 +486,7 @@ class Janela(QMainWindow, Recursos):
         pasta = pasta or padrao
         # subpasta por tipo só quando o destino é a pasta padrão (se a pessoa escolheu outra, respeita)
         por_tipo = self.settings.value("por_tipo", "true") != "false" and os.path.normpath(pasta) == os.path.normpath(padrao)
-        d = Download(url, pasta, self.sp_con.value(), nome=nome, headers=headers, por_tipo=por_tipo)
+        d = criar_download(tipo, url, pasta, self.sp_con.value(), nome=nome, headers=headers, por_tipo=por_tipo)
         if pausado:
             d.status = PAUSADO
         self._inserir(d)
@@ -609,6 +612,8 @@ class Janela(QMainWindow, Recursos):
             self.tab.item(r, COL_ETA).setText(fmt_tempo(d.tempo_restante) if em_curso else "")
             self.tab.item(r, COL_CON).setText(str(d.conexoes_ativas) if em_curso else "")
             st = d.status + (f": {d.erro}" if d.status == ERRO and d.erro else "")
+            if d.status == BAIXANDO and d.etapa:
+                st = d.etapa
             if d.status == CONCLUIDO and d.concluido_em:
                 st += time.strftime(" · %d/%m %H:%M", time.localtime(d.concluido_em))
             it = self.tab.item(r, COL_STATUS)
@@ -640,7 +645,8 @@ class Janela(QMainWindow, Recursos):
         for d in self.downloads:
             if d.status == CONCLUIDO and d not in concluidos:
                 continue
-            x = {"url": d.url, "pasta": d.pasta, "conexoes": d.conexoes, "nome": d.nome, "headers": d.headers_extra}
+            x = {"url": d.url, "pasta": d.pasta, "conexoes": d.conexoes, "nome": d.nome, "headers": d.headers_extra,
+                 "tipo": d.tipo}
             if d.status == CONCLUIDO:
                 x.update(concluido=True, caminho=d.caminho, tamanho=d.tamanho, concluido_em=d.concluido_em)
             dados.append(x)
@@ -657,7 +663,8 @@ class Janela(QMainWindow, Recursos):
             return
         for x in dados:
             try:
-                d = Download(x["url"], x["pasta"], x.get("conexoes", 16), nome=x.get("nome"), headers=x.get("headers"))
+                d = criar_download(x.get("tipo"), x["url"], x["pasta"], x.get("conexoes", 16), nome=x.get("nome"),
+                                   headers=x.get("headers"))
             except (KeyError, TypeError):
                 continue
             if x.get("concluido"):
@@ -751,7 +758,8 @@ class Janela(QMainWindow, Recursos):
             return
         if self.settings.value("perguntar_navegador", "true") == "false":
             nome = info.get("nome") if parece_nome_de_arquivo(info.get("nome")) else None
-            self.adicionar(url, nome=nome, headers=headers_do_pedido(info), avisar_duplicado=False)
+            self.adicionar(url, nome=nome, headers=headers_do_pedido(info), avisar_duplicado=False,
+                           tipo=info.get("tipo"))
             self.tray.showMessage(APP_NAME, f"Baixando {info.get('nome') or nome_do_link(url) or url}",
                                   icone_app(), 3000)
             return
