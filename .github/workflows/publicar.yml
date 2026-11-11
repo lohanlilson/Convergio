@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
     # só publica se a versão ainda não tiver Release (senão termina em segundos)
-    paths: ["convergio/**", "main.py", "build.py", "installer/**", "assets/**", ".github/workflows/publicar.yml"]
+    paths: ["convergio/**", "extensao/**", "main.py", "build.py", "installer/**", "assets/**", ".github/workflows/publicar.yml"]
   workflow_dispatch:
 
 permissions:
