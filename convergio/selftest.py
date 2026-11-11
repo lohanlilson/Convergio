@@ -119,7 +119,8 @@ def executar(argv):
 
     def log(m):
         linhas.append(m)
-        print(m, flush=True)
+        if sys.stdout:                      # o executável não tem console
+            print(m, flush=True)
 
     from . import APP_NAME, __version__
     log(f"{APP_NAME} {__version__} — autoteste")
@@ -149,8 +150,9 @@ def executar(argv):
     if saida:
         with open(saida, "w", encoding="utf-8") as f:
             f.write("\n".join(linhas) + "\n")
-    sys.stdout.flush()
-    sys.stderr.flush()
+    for fluxo in (sys.stdout, sys.stderr):
+        if fluxo:
+            fluxo.flush()
     if sys.platform == "win32":
         # encerra na hora, sem descarregar as DLLs do Qt (threads de rede ainda podem estar abertas)
         import ctypes
