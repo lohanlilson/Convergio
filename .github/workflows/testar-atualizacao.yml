@@ -1,5 +1,5 @@
-# Testa a atualização no Windows: versão publicada instalada -> instalador gerado deste código (9.9.9),
-# com o programa ainda aberto (o caso que falhava) e pelo ajudante, como o botão "Atualizar agora" faz.
+# Reproduz a atualização como no computador do usuário: programa aberto com download em andamento,
+# Chrome aberto com a extensão carregada da pasta do Convergio, e o ajudante de atualização.
 name: Testar atualização
 
 on:
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        antiga: ["1.0.1", "1.1.0"]
+        cenario: ["chrome-com-extensao", "download-em-andamento"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,28 +26,44 @@ jobs:
           python -m pip install -q -r requirements.txt pyinstaller
           if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup -y --no-progress; fi
           python build.py > build.log 2>&1 || (tail -40 build.log; exit 1)
-      - name: Instalar ${{ matrix.antiga }}, deixar aberto e atualizar pelo ajudante
+      - name: Instalar 1.1.2 e preparar o cenário
         shell: pwsh
         run: |
-          $v = "${{ matrix.antiga }}"
-          Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v$v/Convergio-Setup-$v.exe" -OutFile antiga.exe
+          Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v1.1.2/Convergio-Setup-1.1.2.exe" -OutFile antiga.exe
           $p = Start-Process .\antiga.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru; $p.WaitForExit()
           Start-Sleep 5; Get-Process Convergio -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
+      - name: Atualizar (${{ matrix.cenario }})
+        shell: pwsh
+        run: |
           $exe = "C:\Program Files\Convergio\Convergio.exe"
           $novo = (Resolve-Path "Saida\Convergio-Setup-9.9.9.exe").Path
           $app = Start-Process $exe -PassThru; Start-Sleep 8
-          # ajudante esperando um programa que NÃO fecha (pior caso): depois de 30 s ele inicia o instalador
+          if ("${{ matrix.cenario }}" -eq "chrome-com-extensao") {
+            $chrome = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe").'(default)'
+            Start-Process $chrome -ArgumentList "--user-data-dir=$env:TEMP\perfil-chrome","--no-first-run","--load-extension=C:\Program Files\Convergio\extensao","about:blank"
+            Start-Sleep 10
+            Write-Host "Chrome aberto: $((Get-Process chrome -ErrorAction SilentlyContinue).Count) processos"
+          } else {
+            # download real em andamento no Convergio (link entregue à cópia aberta)
+            Start-Process $exe -ArgumentList "https://speed.hetzner.de/1GB.bin"; Start-Sleep 3
+            Start-Process $exe -ArgumentList "https://proof.ovh.net/files/1Gb.dat"; Start-Sleep 8
+          }
+          Write-Host "--- quem está usando arquivos da pasta do Convergio:"
+          Get-Process | Where-Object { try { $_.Modules | Where-Object { $_.FileName -like "C:\Program Files\Convergio\*" } } catch {} } | ForEach-Object { "$($_.ProcessName)#$($_.Id)" }
+          Remove-Item "$env:TEMP\Convergio-instalacao.log" -ErrorAction SilentlyContinue
+          # exatamente o que o botão "Atualizar agora" da 1.1.2 faz
           Start-Process $exe -ArgumentList "--run-update", "`"$novo`"", $app.Id
+          Start-Sleep 2; Stop-Process -Id $app.Id -Force
           $t = Get-Date
-          while (((Get-Date) - $t).TotalSeconds -lt 220) {
+          while (((Get-Date) - $t).TotalSeconds -lt 180) {
             Start-Sleep 3
             $lista = Get-Process | Where-Object { $_.ProcessName -match "Convergio" } | ForEach-Object { "$($_.ProcessName)#$($_.Id)" }
             Write-Host ("{0,4}s  {1}" -f [int]((Get-Date) - $t).TotalSeconds, ($lista -join "  "))
-            if (((Get-Date) - $t).TotalSeconds -gt 100 -and -not ($lista -match "Setup")) { break }
+            if (((Get-Date) - $t).TotalSeconds -gt 50 -and -not ($lista -match "Setup")) { break }
           }
           $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{3680703B-A357-4D95-B063-9D9D747F6B6F}_is1"
           $ver = (Get-ItemProperty $key).DisplayVersion
           Write-Host "=== Versão instalada no fim: $ver"
-          $logs = @("$env:TEMP\Convergio-instalacao.log") + (Get-ChildItem "$env:TEMP\Setup Log*" -ErrorAction SilentlyContinue | ForEach-Object FullName)
-          foreach ($l in $logs) { if (Test-Path $l) { Write-Host "--- $l"; Get-Content $l | Select-String "rror|Abort|ollback|succeeded|Message box|Restart" | Select-Object -First 25 } }
+          $log = "$env:TEMP\Convergio-instalacao.log"
+          if (Test-Path $log) { Get-Content $log | Select-String "rror|Abort|ollback|succeeded|Message box|Restart|in use|denied|Defaulting" | Select-Object -First 40 }
           if ($ver -ne "9.9.9") { Write-Error "A atualização não foi aplicada"; exit 1 }
