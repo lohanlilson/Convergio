@@ -21,7 +21,8 @@ from .motor import CONCLUIDO, ERRO, Download, fmt_bytes
 URL_VERSAO = f"https://github.com/{UPDATE_REPO}/releases/latest/download/versao.json"
 LOG_INSTALACAO = os.path.join(tempfile.gettempdir(), "Convergio-instalacao.log")
 MARCADOR = os.path.join(tempfile.gettempdir(), "Convergio-atualizacao.json")
-ARGS_INSTALADOR = ["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", f"/LOG={LOG_INSTALACAO}"]
+# sem /SUPPRESSMSGBOXES: se algo der errado, o usuário vê o motivo e pode "Tentar novamente"
+ARGS_INSTALADOR = ["/SILENT", "/NORESTART", "/CLOSEAPPLICATIONS", f"/LOG={LOG_INSTALACAO}"]
 
 
 def vtuple(v):

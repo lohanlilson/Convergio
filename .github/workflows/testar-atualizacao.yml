@@ -1,5 +1,5 @@
-# Reproduz a atualização como no computador do usuário: programa aberto com download em andamento,
-# Chrome aberto com a extensão carregada da pasta do Convergio, e o ajudante de atualização.
+# Reproduz o "desfazendo alterações": outro processo mantém uma DLL do Convergio carregada durante a
+# atualização. O instalador publicado (1.1.2) deve falhar; o gerado deste código deve instalar mesmo assim.
 name: Testar atualização
 
 on:
@@ -14,56 +14,49 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cenario: ["chrome-com-extensao", "download-em-andamento"]
+        instalador: ["publicado-1.1.2", "novo-9.9.9"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Gerar instalador 9.9.9 deste código
+        if: matrix.instalador == 'novo-9.9.9'
         shell: bash
         run: |
           sed -i 's/__version__ = ".*"/__version__ = "9.9.9"/' convergio/__init__.py
           python -m pip install -q -r requirements.txt pyinstaller
           if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup -y --no-progress; fi
           python build.py > build.log 2>&1 || (tail -40 build.log; exit 1)
-      - name: Instalar 1.1.2 e preparar o cenário
+          cp Saida/Convergio-Setup-9.9.9.exe nova.exe
+      - name: Instalar 1.1.2
         shell: pwsh
         run: |
           Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v1.1.2/Convergio-Setup-1.1.2.exe" -OutFile antiga.exe
+          if (-not (Test-Path nova.exe)) { Copy-Item antiga.exe nova.exe }
           $p = Start-Process .\antiga.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru; $p.WaitForExit()
           Start-Sleep 5; Get-Process Convergio -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
-      - name: Atualizar (${{ matrix.cenario }})
+      - name: Atualizar com uma DLL do Convergio presa em outro processo
         shell: pwsh
         run: |
-          $exe = "C:\Program Files\Convergio\Convergio.exe"
-          $novo = (Resolve-Path "Saida\Convergio-Setup-9.9.9.exe").Path
-          $app = Start-Process $exe -PassThru; Start-Sleep 8
-          if ("${{ matrix.cenario }}" -eq "chrome-com-extensao") {
-            $chrome = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe").'(default)'
-            Start-Process $chrome -ArgumentList "--user-data-dir=$env:TEMP\perfil-chrome","--no-first-run","--load-extension=C:\Program Files\Convergio\extensao","about:blank"
-            Start-Sleep 10
-            Write-Host "Chrome aberto: $((Get-Process chrome -ErrorAction SilentlyContinue).Count) processos"
-          } else {
-            # download real em andamento no Convergio (link entregue à cópia aberta)
-            Start-Process $exe -ArgumentList "https://speed.hetzner.de/1GB.bin"; Start-Sleep 3
-            Start-Process $exe -ArgumentList "https://proof.ovh.net/files/1Gb.dat"; Start-Sleep 8
-          }
-          Write-Host "--- quem está usando arquivos da pasta do Convergio:"
-          Get-Process | Where-Object { try { $_.Modules | Where-Object { $_.FileName -like "C:\Program Files\Convergio\*" } } catch {} } | ForEach-Object { "$($_.ProcessName)#$($_.Id)" }
-          Remove-Item "$env:TEMP\Convergio-instalacao.log" -ErrorAction SilentlyContinue
-          # exatamente o que o botão "Atualizar agora" da 1.1.2 faz
-          Start-Process $exe -ArgumentList "--run-update", "`"$novo`"", $app.Id
-          Start-Sleep 2; Stop-Process -Id $app.Id -Force
-          $t = Get-Date
-          while (((Get-Date) - $t).TotalSeconds -lt 180) {
-            Start-Sleep 3
-            $lista = Get-Process | Where-Object { $_.ProcessName -match "Convergio" } | ForEach-Object { "$($_.ProcessName)#$($_.Id)" }
-            Write-Host ("{0,4}s  {1}" -f [int]((Get-Date) - $t).TotalSeconds, ($lista -join "  "))
-            if (((Get-Date) - $t).TotalSeconds -gt 50 -and -not ($lista -match "Setup")) { break }
-          }
+          $dll = (Get-ChildItem "C:\Program Files\Convergio\_internal\python3*.dll" | Where-Object Name -match "python3\d+\.dll").FullName
+          Write-Host "DLL que ficará presa: $dll"
+          $script = "Add-Type -Namespace W -Name K -MemberDefinition '[DllImport(""kernel32.dll"")] public static extern IntPtr LoadLibrary(string p);'; [W.K]::LoadLibrary('$dll') | Out-Null; Start-Sleep 600"
+          $preso = Start-Process powershell -ArgumentList "-NoProfile","-Command",$script -PassThru -WindowStyle Hidden
+          Start-Sleep 6
+          Write-Host "Processo segurando a DLL: powershell#$($preso.Id)"
+          $log = "$env:TEMP\convergio-teste.log"
+          # mesmos parâmetros que a atualização automática da 1.1.2 usa
+          $p = Start-Process .\nova.exe -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS',"/LOG=`"$log`"" -PassThru
+          $p.WaitForExit()
           $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{3680703B-A357-4D95-B063-9D9D747F6B6F}_is1"
-          $ver = (Get-ItemProperty $key).DisplayVersion
-          Write-Host "=== Versão instalada no fim: $ver"
-          $log = "$env:TEMP\Convergio-instalacao.log"
-          if (Test-Path $log) { Get-Content $log | Select-String "rror|Abort|ollback|succeeded|Message box|Restart|in use|denied|Defaulting" | Select-Object -First 40 }
-          if ($ver -ne "9.9.9") { Write-Error "A atualização não foi aplicada"; exit 1 }
+          Write-Host "=== Código de saída: $($p.ExitCode) | versão instalada: $((Get-ItemProperty $key).DisplayVersion)"
+          Get-Content $log | Select-String "rror|Abort|ollback|succeeded|Message box|in use|em uso|renomeado|Defaulting|Rolling" | Select-Object -First 30
+          Write-Host "--- sobras .antigo:"; Get-ChildItem "C:\Program Files\Convergio" -Recurse -Filter *.antigo | ForEach-Object FullName
+          Stop-Process -Id $preso.Id -Force
+          if ("${{ matrix.instalador }}" -eq "novo-9.9.9") {
+            Start-Sleep 2
+            $s = Start-Process "C:\Program Files\Convergio\Convergio.exe" -ArgumentList "--selftest","st.txt" -PassThru; $s.WaitForExit()
+            Get-Content st.txt | Select-Object -Last 3
+            Write-Host "--- sobras .antigo depois de abrir o programa:"; Get-ChildItem "C:\Program Files\Convergio" -Recurse -Filter *.antigo | ForEach-Object FullName
+            if ((Get-ItemProperty $key).DisplayVersion -ne "9.9.9" -or $s.ExitCode -ne 0) { Write-Error "Falhou"; exit 1 }
+          }

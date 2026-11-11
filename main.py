@@ -8,6 +8,18 @@
 import sys
 
 
+def _limpar_sobras_de_atualizacao():
+    """Apaga arquivos *.antigo que o instalador renomeou por estarem em uso durante uma atualização."""
+    import os
+    for raiz, _, arquivos in os.walk(os.path.dirname(sys.executable)):
+        for nome in arquivos:
+            if nome.endswith(".antigo"):
+                try:
+                    os.remove(os.path.join(raiz, nome))
+                except OSError:
+                    pass
+
+
 def main():
     argv = sys.argv
     if "--run-update" in argv:
@@ -32,6 +44,9 @@ def main():
             return 0
     elif entregar_a_instancia_aberta(links):
         return 0
+
+    if getattr(sys, "frozen", False):
+        _limpar_sobras_de_atualizacao()
 
     if sys.platform == "win32":
         import ctypes
