@@ -1,5 +1,9 @@
 # Novidades do Convergio
 
+## 1.1.2
+- **Extensão corrigida:** com o navegador configurado para perguntar onde salvar, o download ficava parado e não começava nem no navegador nem no Convergio. Agora a extensão decide antes da janela "Salvar como": se o Convergio estiver aberto, o download vai direto para ele; se não, o navegador segue normalmente.
+- **Depois de atualizar, recarregue a extensão** em `chrome://extensions` (botão ↻ no cartão do Convergio) ou reinicie o navegador.
+
 ## 1.1.1
 - **Atualização automática corrigida:** o instalador agora fecha o Convergio sozinho antes de copiar os arquivos, em vez de desistir ou desfazer a instalação. Se algo impedir a atualização (por exemplo, o antivírus), o programa mostra o motivo ao abrir e oferece instalar manualmente.
 - **Segundo plano desde a primeira vez:** o X manda o Convergio para perto do relógio do Windows; para fechar de vez, use **Sair** no menu do ícone.

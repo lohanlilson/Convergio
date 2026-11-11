@@ -62,32 +62,57 @@ async function enviar(url, extra) {
   });
 }
 
-// downloads iniciados pelo navegador
-chrome.downloads.onCreated.addListener(async (item) => {
-  const cfg = await config();
-  if (!cfg.ativo) return;
-  const url = item.finalUrl || item.url;
-  if (!/^https?:/i.test(url) || item.state !== "in_progress") return;
-  if (cfg.minimoMB > 0 && item.totalBytes > 0 && item.totalBytes < cfg.minimoMB * 1024 * 1024) return;
+// Downloads iniciados pelo navegador.
+// onDeterminingFilename roda ANTES da janela "Salvar como" do navegador: decidimos aqui se o download vai
+// para o Convergio (cancela no navegador, sem janela) ou segue normalmente no navegador.
+const IGNORAR = "convergio_ignorar";   // links devolvidos ao navegador (não capturar de novo)
 
-  try { await chrome.downloads.pause(item.id); } catch (e) { /* ainda não começou */ }
+async function marcarIgnorar(url) {
+  const d = await chrome.storage.session.get({ [IGNORAR]: [] });
+  d[IGNORAR].push(url);
+  await chrome.storage.session.set({ [IGNORAR]: d[IGNORAR].slice(-20) });
+}
+
+async function deveIgnorar(url) {
+  const d = await chrome.storage.session.get({ [IGNORAR]: [] });
+  const i = d[IGNORAR].indexOf(url);
+  if (i < 0) return false;
+  d[IGNORAR].splice(i, 1);
+  await chrome.storage.session.set({ [IGNORAR]: d[IGNORAR] });
+  return true;
+}
+
+async function decidir(item) {
+  const cfg = await config();
+  if (!cfg.ativo) return false;
+  const url = item.finalUrl || item.url;
+  if (!/^https?:/i.test(url) || item.state !== "in_progress") return false;
+  if (item.byExtensionId === chrome.runtime.id || await deveIgnorar(url)) return false;
+  if (cfg.minimoMB > 0 && item.totalBytes > 0 && item.totalBytes < cfg.minimoMB * 1024 * 1024) return false;
   const estado = await estadoConvergio();
-  if (!estado.aberto || !estado.capturar) {
-    chrome.downloads.resume(item.id).catch(() => {});
-    return;
-  }
+  if (!estado.aberto || !estado.capturar) return false;
+
+  try { await chrome.downloads.cancel(item.id); } catch (e) { return false; }
+  chrome.downloads.erase({ id: item.id }).catch(() => {});
   const ok = await enviar(url, {
     referrer: item.referrer || "",
     nome: nomeDoArquivo(item.filename),
-    tamanho: item.totalBytes > 0 ? item.totalBytes : null,
+    tamanho: item.totalBytes > 0 ? item.totalBytes : (item.fileSize > 0 ? item.fileSize : null),
     mime: item.mime || "",
   });
-  if (ok) {
-    try { await chrome.downloads.cancel(item.id); } catch (e) {}
-    try { await chrome.downloads.erase({ id: item.id }); } catch (e) {}
-  } else {
-    chrome.downloads.resume(item.id).catch(() => {});
+  if (!ok) {
+    // o Convergio parou de responder: devolve o download ao navegador
+    await marcarIgnorar(url);
+    chrome.downloads.download({ url }).catch(() => {});
   }
+  return true;
+}
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  decidir(item)
+    .catch(() => false)
+    .then((capturado) => { if (!capturado) suggest(); });
+  return true;   // vamos responder depois (assíncrono)
 });
 
 // botão direito num link: "Baixar com o Convergio"
