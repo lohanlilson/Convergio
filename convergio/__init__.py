@@ -2,7 +2,7 @@
 import os
 import sys
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 APP_NAME = "Convergio"
 APP_ID = "Convergio"
 AUTHOR = "Lohan Lilson S. Lopes"

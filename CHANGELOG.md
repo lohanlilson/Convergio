@@ -1,5 +1,10 @@
 # Novidades do Convergio
 
+## 1.1.1
+- **Atualização automática corrigida:** o instalador agora fecha o Convergio sozinho antes de copiar os arquivos, em vez de desistir ou desfazer a instalação. Se algo impedir a atualização (por exemplo, o antivírus), o programa mostra o motivo ao abrir e oferece instalar manualmente.
+- **Segundo plano desde a primeira vez:** o X manda o Convergio para perto do relógio do Windows; para fechar de vez, use **Sair** no menu do ícone.
+- Na primeira vez, o programa pergunta se deve **iniciar com o Windows** (em silêncio, só em segundo plano).
+
 ## 1.1.0
 - **Captura de downloads dos navegadores** (Chrome, Edge, Brave e Opera) pela extensão do Convergio: o download vai direto para o programa, com os cookies da sessão (sites com login também funcionam). Se o Convergio estiver fechado, o navegador baixa normalmente.
 - Janela "Download capturado" para escolher o nome e a pasta (dá para desligar em Navegadores › Perguntar antes de baixar).
