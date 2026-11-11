@@ -1,5 +1,12 @@
 # Novidades do Convergio
 
+## 1.3.0
+- **Captura de vídeos:** quando uma página tem vídeo, o ícone da extensão mostra um número; clique nele e em **Baixar**. Funciona com vídeos em streaming (HLS) e arquivos de vídeo diretos. O Convergio baixa os pedaços com várias conexões e junta tudo num `.mp4`.
+- Na primeira vez que um vídeo em streaming é baixado, o Convergio baixa sozinho o conversor FFmpeg (uns 40 MB, uma vez só).
+- Não funciona no YouTube, em vídeos com proteção contra cópia (Netflix e parecidos) nem em transmissões ao vivo.
+- **Atualizações menores:** a partir desta versão, o programa baixa só os arquivos que mudaram, em vez do instalador inteiro.
+- Depois de atualizar, recarregue a extensão em `chrome://extensions` (botão ↻); o navegador vai pedir para aceitar as permissões novas, usadas para encontrar os vídeos.
+
 ## 1.2.0
 - **Histórico:** os downloads concluídos ficam na lista, com data e hora, mesmo depois de fechar o programa.
 - **Pastas por tipo:** vídeos, músicas, documentos, compactados, programas e imagens vão cada um para a sua subpasta (dá para desligar em Configurações › Downloads).

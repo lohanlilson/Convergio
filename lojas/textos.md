@@ -13,6 +13,8 @@ ao mesmo tempo, com pausar e retomar.
 - Captura automática dos downloads (com um tamanho mínimo configurável).
 - Botão direito num link: "Baixar com o Convergio".
 - Funciona em sites com login: os cookies do site vão junto com o download.
+- Encontra os vídeos da página (streaming HLS e arquivos de vídeo) e mostra um botão "Baixar" no ícone da extensão.
+  Não baixa do YouTube nem vídeos protegidos contra cópia.
 - Se o Convergio não estiver aberto, o navegador baixa normalmente.
 
 A extensão precisa do programa Convergio instalado: https://github.com/lohanlilson/Convergio
@@ -27,4 +29,6 @@ Ela conversa só com o programa no seu próprio computador (127.0.0.1) e não en
 - `contextMenus`: item "Baixar com o Convergio" no botão direito.
 - `storage`: guardar as opções da extensão.
 - `notifications`: avisar quando o Convergio não está aberto.
+- `webRequest`, `webNavigation` e `tabs`: observar (sem alterar) as respostas da aba para encontrar vídeos,
+  limpar a lista ao trocar de página e usar o título da aba como nome do arquivo.
 - `alarms`: avisar o programa, uma vez por minuto, de que o navegador está vinculado.

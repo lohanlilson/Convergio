@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
     # só publica se a versão ainda não tiver Release (senão termina em segundos)
-    paths: ["convergio/**", "extensao/**", "main.py", "build.py", "installer/**", "assets/**", ".github/workflows/publicar.yml"]
+    paths: ["convergio/**", "extensao/**", "main.py", "build.py", "installer/**", "tools/**", "assets/**", ".github/workflows/publicar.yml"]
   workflow_dispatch:
 
 permissions:
@@ -63,9 +63,15 @@ jobs:
           c=0; python main.py --selftest selftest-fonte.txt || c=$?
           echo "Código de saída: $c"; exit $c
 
-      - name: Gerar executável e instalador
+      - name: Versão anterior (base da atualização pequena)
         if: steps.versao.outputs.publicar == 'sim'
-        run: python build.py --publicar
+        shell: pwsh
+        run: ./tools/ci_base.ps1
+
+      - name: Gerar executável, instalador e atualização pequena
+        if: steps.versao.outputs.publicar == 'sim'
+        shell: bash
+        run: python build.py --publicar --base-dir base-anterior --base-versao "$BASE_VERSAO"
 
       - name: Autoteste do executável gerado (sem Python)
         if: steps.versao.outputs.publicar == 'sim'
@@ -94,6 +100,12 @@ jobs:
           Get-Content selftest-instalado.txt
           if ($p.ExitCode -ne 0) { throw "Autoteste do programa instalado falhou" }
           $p = Start-Process (Join-Path $dir "unins000.exe") -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -PassThru; $p.WaitForExit()
+
+      - name: Teste da atualização pequena (versão anterior aberta -> esta versão)
+        if: steps.versao.outputs.publicar == 'sim'
+        timeout-minutes: 10
+        shell: pwsh
+        run: ./tools/ci_testar_patch.ps1 -Versao $env:VERSAO
 
       - name: Publicar Release
         if: steps.versao.outputs.publicar == 'sim'

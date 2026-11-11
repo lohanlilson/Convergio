@@ -26,6 +26,9 @@ com servidores que limitam a velocidade de cada conexão.
 - **Atualização automática**: o programa avisa quando sai uma versão nova e se atualiza sozinho.
 - **Captura de downloads dos navegadores** (Chrome, Edge, Brave, Opera) pela extensão em [`extensao/`](extensao),
   levando os cookies da sessão. Se o Convergio estiver fechado, o navegador baixa normalmente.
+- **Captura de vídeos** das páginas (streaming HLS e arquivos diretos), juntados em `.mp4` com o
+  [FFmpeg](https://ffmpeg.org), que o programa baixa sob demanda do pacote
+  [imageio-ffmpeg](https://pypi.org/project/imageio-ffmpeg/). Não baixa do YouTube, de vídeos com DRM nem ao vivo.
 - Fica em **segundo plano** perto do relógio do Windows, com menu de atalhos, e pode iniciar com o Windows.
 - Protocolo `convergio:<link>`, que permite enviar downloads de outros programas.
 
