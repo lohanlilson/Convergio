@@ -48,6 +48,7 @@ CloseApplications=force
 RestartApplications=no
 AppMutex=Convergio_Running
 MinVersion=10.0
+SetupLogging=yes
 
 [Languages]
 Name: "pt"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"

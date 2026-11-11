@@ -1,0 +1,60 @@
+# Reproduz a atualização automática: instala uma versão antiga, abre o programa e dispara o atualizador
+# exatamente como o botão "Atualizar agora" faz, usando um instalador novo gerado deste código.
+name: Testar atualização
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/testar-atualizacao.yml"]
+
+jobs:
+  atualizar:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        antiga: ["1.0.1", "1.1.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Gerar instalador novo (versão de teste 9.9.9)
+        shell: bash
+        run: |
+          sed -i 's/__version__ = ".*"/__version__ = "9.9.9"/' convergio/__init__.py
+          python -m pip install -q -r requirements.txt pyinstaller
+          if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup -y --no-progress; fi
+          python build.py
+      - name: Instalar a versão antiga e abrir
+        shell: pwsh
+        run: |
+          $v = "${{ matrix.antiga }}"
+          Invoke-WebRequest "https://github.com/lohanlilson/Convergio/releases/download/v$v/Convergio-Setup-$v.exe" -OutFile antiga.exe
+          $p = Start-Process .\antiga.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru; $p.WaitForExit()
+          Start-Sleep 5; Get-Process Convergio -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
+          Remove-Item "$env:TEMP\Setup Log*" -ErrorAction SilentlyContinue
+      - name: Atualizar como o programa faz
+        shell: pwsh
+        run: |
+          $exe = "C:\Program Files\Convergio\Convergio.exe"
+          $novo = (Resolve-Path "Saida\Convergio-Setup-9.9.9.exe").Path
+          $app = Start-Process $exe -PassThru; Start-Sleep 10
+          Write-Host "Programa aberto: PID $($app.Id)"
+          # o que o "Atualizar agora" faz: agenda o ajudante e fecha o programa
+          Start-Process $exe -ArgumentList "--run-update", "`"$novo`"", $app.Id
+          Start-Sleep 1
+          $fechou = $app.CloseMainWindow(); Write-Host "Pedido de fechar enviado: $fechou"
+          if (-not $app.WaitForExit(15000)) { Write-Host "O programa NÃO fechou em 15 s"; }
+          for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep 2
+            $inst = Get-Process | Where-Object { $_.ProcessName -like "Convergio-Setup*" -or $_.ProcessName -like "*.tmp" }
+            if ($i -gt 5 -and -not $inst) { break }
+          }
+          Write-Host "--- processos Convergio:"; Get-Process Convergio -ErrorAction SilentlyContinue | Format-Table Id, StartTime, Path -AutoSize
+          $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{3680703B-A357-4D95-B063-9D9D747F6B6F}_is1"
+          $ver = (Get-ItemProperty $key).DisplayVersion
+          Write-Host "=== Versão instalada depois da atualização: $ver"
+          Write-Host "--- log do instalador:"
+          Get-ChildItem "$env:TEMP\Setup Log*" | ForEach-Object { Get-Content $_.FullName | Select-Object -Last 80 }
+          if ($ver -ne "9.9.9") { Write-Error "A atualização não foi aplicada"; exit 1 }
