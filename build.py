@@ -61,6 +61,7 @@ def pyinstaller(ver):
            "--version-file", arquivo_versao(ver),
            "--add-data", f"{os.path.join(ROOT, 'assets')}{sep}assets",
            "--distpath", "dist", "--workpath", os.path.join("build", "pyi"), "--specpath", "build",
+           "--hidden-import", "libtorrent", "--collect-binaries", "libtorrent",
            "--exclude-module", "tkinter", "--exclude-module", "PySide6.QtWebEngineCore",
            "--exclude-module", "PySide6.QtWebEngineWidgets", "--exclude-module", "PySide6.Qt3DCore",
            "--exclude-module", "PySide6.QtQuick", "--exclude-module", "PySide6.QtQml",

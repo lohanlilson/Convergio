@@ -22,12 +22,13 @@ from .atualizador import Atualizador, avisar_falha, resultado_da_ultima_atualiza
 from .integracao import Servidor
 from .recursos import DialogoConfiguracoes, Recursos, RE_LINKS
 from .video import criar_download
+from . import torrent, verificacao
 from .motor import (BAIXANDO, CONCLUIDO, CONECTANDO, ERRO, NA_FILA, PAUSADO, Download, fmt_bytes, fmt_tempo,
                     parece_nome_de_arquivo)
 
 LISTA = Path(os.environ.get("APPDATA") or Path.home()) / "Convergio" / "downloads.json"
 PASTA_PADRAO = str(Path.home() / "Downloads")
-RE_URL = re.compile(r"^https?://\S+$", re.I)
+RE_URL = re.compile(r"^(https?://\S+|magnet:\?\S+)$", re.I)
 EXT_MONITORADAS = re.compile(
     r"\.(zip|rar|7z|tar|gz|iso|exe|msi|apk|pdf|mp4|mkv|avi|mov|mp3|flac|bin|img|dmg|deb|rpm|torrent)(\?|$)", re.I)
 
@@ -257,7 +258,7 @@ class Janela(QMainWindow, Recursos):
         hl.addLayout(topo)
         hl.addSpacing(8)
         lu = QHBoxLayout()
-        self.ed_url = QLineEdit(placeholderText="Cole o link do download (http/https)…")
+        self.ed_url = QLineEdit(placeholderText="Cole o link do download (http, https ou magnet)…")
         self.ed_url.returnPressed.connect(self.adicionar)
         bt_add = QPushButton("Baixar", objectName="HeroPrimary")
         bt_add.setCursor(Qt.PointingHandCursor)
@@ -368,6 +369,7 @@ class Janela(QMainWindow, Recursos):
         a = m.addAction("Colar link e baixar", self.colar_e_baixar)
         a.setShortcut("Ctrl+V")
         m.addAction("Adicionar vários links…", lambda: self.adicionar_varios()).setShortcut("Ctrl+L")
+        m.addAction("Abrir arquivo .torrent…", self.abrir_torrent).setShortcut("Ctrl+O")
         m.addAction("Escolher pasta de destino…", self.escolher_pasta)
         m.addSeparator()
         m.addAction("Configurações…", lambda: self.abrir_configuracoes()).setShortcut("Ctrl+,")
@@ -385,6 +387,7 @@ class Janela(QMainWindow, Recursos):
         m.addAction("Limpar concluídos", self.limpar_concluidos)
         m.addSeparator()
         m.addAction(self.act_limite)
+        m.addAction(self.act_inteligente)
         m.addAction("Abrir pasta", self.abrir_pasta)
 
         m = mb.addMenu("&Navegadores")
@@ -475,9 +478,16 @@ class Janela(QMainWindow, Recursos):
             self.ed_url.clear()
             self.adicionar_varios(url)
             return
-        if not RE_URL.match(url):
-            QMessageBox.warning(self, "Link inválido", "Informe um link começando com http:// ou https://")
+        arquivo_torrent = url.lower().endswith(".torrent") and os.path.isfile(url)
+        if not RE_URL.match(url) and not arquivo_torrent:
+            QMessageBox.warning(self, "Link inválido",
+                                "Informe um link começando com http://, https:// ou magnet:")
             return
+        if tipo is None and torrent.eh_torrent(url):
+            tipo = "torrent"
+            if not torrent.disponivel():
+                QMessageBox.warning(self, "Torrent", "O suporte a torrent não pôde ser carregado neste computador.")
+                return
         if any(d.url == url and d.status != CONCLUIDO for d in self.downloads):
             if avisar_duplicado:
                 QMessageBox.information(self, "Já na lista", "Esse link já está na lista de downloads.")
@@ -550,7 +560,9 @@ class Janela(QMainWindow, Recursos):
             d = self.downloads.pop(r)
             d.pausar()
             d.aguardar(5)
-            if apagar and d.status != CONCLUIDO and d.caminho:
+            if apagar and d.status != CONCLUIDO and hasattr(d, "apagar_parciais"):
+                d.apagar_parciais()
+            elif apagar and d.status != CONCLUIDO and d.caminho:
                 for f in (d.caminho + ".part", d.caminho + ".part.json"):
                     try:
                         os.remove(f)
@@ -573,7 +585,7 @@ class Janela(QMainWindow, Recursos):
         if not self.ck_clip.isChecked():
             return
         t = QGuiApplication.clipboard().text().strip()
-        if t != self._ultimo_clip and RE_URL.match(t) and EXT_MONITORADAS.search(t):
+        if t != self._ultimo_clip and RE_URL.match(t) and (EXT_MONITORADAS.search(t) or torrent.RE_MAGNET.match(t)):
             self._ultimo_clip = t
             self.ed_url.setText(t)
             self.showNormal()
@@ -616,10 +628,13 @@ class Janela(QMainWindow, Recursos):
                 st = d.etapa
             if d.status == CONCLUIDO and d.concluido_em:
                 st += time.strftime(" · %d/%m %H:%M", time.localtime(d.concluido_em))
+            if d.status == CONCLUIDO and d.verif:
+                st += " · " + verificacao.texto_status(d)
             it = self.tab.item(r, COL_STATUS)
             it.setText(st)
             it.setToolTip(st)
-            it.setForeground(QColor(cores.get(d.status, c["muted"])))
+            alerta = d.verif.get("hash") == "diferente" or d.verif.get("av") == "ameaca"
+            it.setForeground(QColor(c["danger"] if alerta else cores.get(d.status, c["muted"])))
 
         sel = self._selecionados()
         d = self.downloads[sel[0]] if sel else None
@@ -631,7 +646,10 @@ class Janela(QMainWindow, Recursos):
             self.lb_seg.setText(d.nome or d.url)
         else:
             self.lb_seg.setText("Selecione um download para ver as conexões")
-        self.lb_total.setText(f"↓ {fmt_bytes(total)}/s" if total else "")
+        aviso = self.inteligente.texto() if total else ""
+        self.lb_total.setText(("  " + aviso + "   " if aviso else "") + (f"↓ {fmt_bytes(total)}/s" if total else ""))
+        self.lb_total.setToolTip(aviso)
+        self._total_atual = total
         if getattr(self, "tray", None):
             self._atualizar_dica_bandeja()
         self._conferir_versao_extensao()
@@ -647,6 +665,10 @@ class Janela(QMainWindow, Recursos):
                 continue
             x = {"url": d.url, "pasta": d.pasta, "conexoes": d.conexoes, "nome": d.nome, "headers": d.headers_extra,
                  "tipo": d.tipo}
+            if d.hash_esperado:
+                x["hash"] = list(d.hash_esperado)
+            if d.verif:
+                x["verif"] = {k: v for k, v in d.verif.items() if v not in ("conferindo", "verificando")}
             if d.status == CONCLUIDO:
                 x.update(concluido=True, caminho=d.caminho, tamanho=d.tamanho, concluido_em=d.concluido_em)
             dados.append(x)
@@ -667,6 +689,9 @@ class Janela(QMainWindow, Recursos):
                                    headers=x.get("headers"))
             except (KeyError, TypeError):
                 continue
+            if x.get("hash"):
+                d.hash_esperado = tuple(x["hash"])
+            d.verif = x.get("verif") or {}
             if x.get("concluido"):
                 d.status = CONCLUIDO
                 d.caminho, d.tamanho = x.get("caminho"), x.get("tamanho")
@@ -770,7 +795,7 @@ class Janela(QMainWindow, Recursos):
     def receber_abrir(self, links: list):
         self.mostrar_janela()
         for u in links:
-            if RE_URL.match(u):
+            if RE_URL.match(u) or (u.lower().endswith(".torrent") and os.path.isfile(u)):
                 self.adicionar(u, avisar_duplicado=False)
 
     def mostrar_janela(self):

@@ -239,6 +239,150 @@ def testar_video(log):
     return falhas
 
 
+def testar_verificacao(log):
+    import base64
+    from . import verificacao as v
+    falhas = 0
+    pasta = tempfile.mkdtemp(prefix="convergio-hash-")
+    arq = os.path.join(pasta, "a.bin")
+    dados = os.urandom(300000)
+    open(arq, "wb").write(dados)
+    sha = hashlib.sha256(dados).hexdigest()
+    md5 = hashlib.md5(dados).hexdigest()
+    ok = v.calcular(arq) == {"sha256": sha, "md5": md5}
+    ok = ok and v.hash_esperado(f"SHA256 ({arq}) = {sha.upper()}") == ("sha256", sha)
+    ok = ok and v.hash_esperado(f"{md5}  a.bin") == ("md5", md5) and v.hash_esperado("sem hash aqui") is None
+    b64 = base64.b64encode(bytes.fromhex(sha)).decode()
+    ok = ok and v.hash_do_servidor({"Digest": f"SHA-256={b64}"}) == ("sha256", sha)
+    ok = ok and v.hash_do_servidor({"Repr-Digest": f"sha-256=:{b64}:"}, parcial=True) == ("sha256", sha)
+    ok = ok and v.hash_do_servidor({"Content-MD5": base64.b64encode(bytes.fromhex(md5)).decode()}, parcial=True) is None
+    falhas += not ok
+    log(f"{'OK ' if ok else 'ERRO'} hash: cálculo, hash colado e hash do servidor")
+
+    class D:
+        pass
+    d = D()
+    d.caminho, d.hash_esperado, d.verif = arq, ("sha256", sha), {}
+    v.processar(d, False)
+    fim = time.time() + 10
+    while d.verif.get("hash") in (None, "conferindo") and time.time() < fim:
+        time.sleep(0.05)
+    d2 = D()
+    d2.caminho, d2.hash_esperado, d2.verif = arq, ("md5", "0" * 32), {}
+    v.processar(d2, False)
+    while d2.verif.get("hash") in (None, "conferindo") and time.time() < fim:
+        time.sleep(0.05)
+    ok = d.verif.get("hash") == "ok" and d2.verif.get("hash") == "diferente" and "⚠" in v.texto_status(d2)
+    falhas += not ok
+    log(f"{'OK ' if ok else 'ERRO'} conferência automática ao concluir (igual e diferente)")
+    if v.antivirus_disponivel():
+        res, det = v.verificar_antivirus(arq, timeout=300)
+        ok = res in ("limpo", "erro")         # num executor de CI o Defender pode estar desligado
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} antivírus (Microsoft Defender): {res} — {det}")
+    else:
+        log("OK  antivírus: Microsoft Defender não está neste computador (opção fica desativada)")
+    shutil.rmtree(pasta, ignore_errors=True)
+    return falhas
+
+
+def testar_inteligente(log):
+    from .inteligente import VelocidadeInteligente, medir_ping, microfone_em_uso, tela_cheia
+    from .motor import LIMITADOR
+    vi = VelocidadeInteligente()
+    vi.ligado = True
+    pings = iter([20, 20, 20, 300, 300, 300, 300] + [25] * 40)
+    vi.medir = lambda: next(pings)
+    vi.mic = lambda: False
+    vi.cheia = lambda: False
+    vi.ajustar(0, False)
+    lim = []
+    for _ in range(14):
+        vi.ajustar(LIMITADOR.automatico or 5e6, True)
+        lim.append(LIMITADOR.automatico)
+    ok = lim[0] == 0 and lim[3] > 0 and lim[6] < lim[3] and lim[-1] > lim[6] and vi.motivo == "internet"
+    vi.mic = lambda: True
+    vi.ajustar(5e6, True)
+    ok = ok and vi.motivo == "chamada" and LIMITADOR.automatico > 0
+    LIMITADOR.limite = 100 * 1024
+    ok = ok and LIMITADOR.efetivo == min(LIMITADOR.limite, LIMITADOR.automatico)
+    LIMITADOR.limite = 0
+    vi.ajustar(5e6, False)
+    ok = ok and LIMITADOR.automatico == 0
+    vi.desligar()
+    falhas = int(not ok)
+    log(f"{'OK ' if ok else 'ERRO'} velocidade inteligente (ping alto reduz, volta aos poucos; chamada limita)")
+    try:
+        p = medir_ping()
+        log(f"OK  ping {'%.0f ms' % p if p is not None else 'sem internet'}; microfone em uso: {microfone_em_uso()}; "
+            f"tela cheia: {tela_cheia()}")
+    except Exception as e:  # noqa: BLE001
+        falhas += 1
+        log(f"ERRO detecção de chamada/jogo/ping: {e}")
+    return falhas
+
+
+def testar_torrent(log):
+    from . import torrent
+    from .motor import CONCLUIDO
+    if not torrent.disponivel():
+        log("ERRO libtorrent não carregou")
+        return 1
+    import pathlib
+    lt = torrent._biblioteca()
+    antigo_dados, antiga_sessao = torrent.PASTA_DADOS, torrent._sessao
+    torrent.PASTA_DADOS = pathlib.Path(tempfile.mkdtemp(prefix="convergio-tdados-"))
+    src, dst = tempfile.mkdtemp(prefix="convergio-tsrc-"), tempfile.mkdtemp(prefix="convergio-tdst-")
+    falhas = 0
+    try:
+        dados = os.urandom(3 * 1024 * 1024 + 123)
+        open(os.path.join(src, "teste.bin"), "wb").write(dados)
+        fs = lt.file_storage()
+        fs.add_file("teste.bin", len(dados))
+        ct = lt.create_torrent(fs, 64 * 1024)
+        lt.set_piece_hashes(ct, src)
+        tp = os.path.join(src, "teste.torrent")
+        open(tp, "wb").write(lt.bencode(ct.generate()))
+        local = {"enable_dht": False, "enable_lsd": False, "enable_upnp": False, "enable_natpmp": False}
+        porta = random.randint(42000, 48000)
+        semeador = lt.session({"listen_interfaces": f"127.0.0.1:{porta}", **local})
+        p = lt.add_torrent_params()
+        p.ti = lt.torrent_info(tp)
+        p.save_path = src
+        sh = semeador.add_torrent(p)
+        fim = time.time() + 20
+        while not sh.status().is_seeding and time.time() < fim:
+            time.sleep(0.1)
+        torrent._sessao = lt.session({"listen_interfaces": f"127.0.0.1:{porta + 1}", **local,
+                                      "alert_mask": lt.alert.category_t.status_notification
+                                      | lt.alert.category_t.storage_notification})
+        for nome, url in (("arquivo .torrent", tp), ("link magnet", lt.make_magnet_uri(lt.torrent_info(tp)))):
+            pasta = os.path.join(dst, nome.split()[-1])
+            d = torrent.DownloadTorrent(url, pasta, 16)
+            d.pares_extras = [("127.0.0.1", porta)]
+            d.iniciar()
+            fim = time.time() + 60
+            while d.status != CONCLUIDO and time.time() < fim and d.status != "Erro":
+                time.sleep(0.2)
+            ok = d.status == CONCLUIDO and open(d.caminho, "rb").read() == dados
+            falhas += not ok
+            log(f"{'OK ' if ok else 'ERRO'} torrent por {nome}: {d.status} {d.erro}")
+        ok = torrent.eh_torrent("magnet:?xt=urn:btih:abc") and torrent.eh_torrent("https://x.org/a.torrent?k=1") \
+            and not torrent.eh_torrent("https://x.org/a.zip")
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} reconhece magnet e .torrent")
+        semeador.remove_torrent(sh)
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        falhas += 1
+        log("ERRO torrent: " + "".join(traceback.format_exception(e)))
+    finally:
+        torrent._sessao, torrent.PASTA_DADOS = antiga_sessao, antigo_dados
+        shutil.rmtree(src, ignore_errors=True)
+        shutil.rmtree(dst, ignore_errors=True)
+    return falhas
+
+
 def executar(argv):
     i = argv.index("--selftest")
     saida = argv[i + 1] if len(argv) > i + 1 else None
@@ -255,6 +399,9 @@ def executar(argv):
     try:
         falhas += testar_motor(log)
         falhas += testar_video(log)
+        falhas += testar_verificacao(log)
+        falhas += testar_inteligente(log)
+        falhas += testar_torrent(log)
         from PySide6.QtWidgets import QApplication
         from . import tema
         from .janela import Janela
@@ -299,11 +446,37 @@ def executar(argv):
         cfg = DialogoConfiguracoes(j, DialogoConfiguracoes.ABA_NAVEGADORES)
         cfg.show()
         app.processEvents()
+        cfg.abas.setCurrentIndex(DialogoConfiguracoes.ABA_INTELIGENTE)
+        app.processEvents()
+        ok = cfg.ck_vi.isChecked() is False and not cfg.ck_av.isChecked()      # opcionais: desligados por padrão
         cfg.close()
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} velocidade inteligente e antivírus vêm desligados")
+        j.aplicar_inteligente(True)
+        ok = j.inteligente.ligado and j.act_inteligente.isChecked()
+        j.aplicar_inteligente(False)
+        ok = ok and not j.inteligente.ligado and LIMITADOR.automatico == 0
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} velocidade inteligente liga e desliga")
+        from .recursos import DialogoHash
+        n = len(j.downloads)
+        j.adicionar("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Teste.iso", pausado=True)
+        ok = len(j.downloads) == n + 1 and j.downloads[-1].tipo == "torrent" and j.downloads[-1].nome == "Teste.iso"
+        dh = DialogoHash(j, j.downloads[-1])
+        dh.ed_esperado.setText("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        dh.accept()
+        ok = ok and j.downloads[-1].hash_esperado[0] == "sha256"
+        j.tab.selectRow(len(j.downloads) - 1)
+        j.downloads.pop()
+        j.tab.removeRow(j.tab.rowCount() - 1)
+        j.salvar_lista()
+        falhas += not ok
+        log(f"{'OK ' if ok else 'ERRO'} link magnet entra na lista; hash esperado informado")
         log(f"OK  configurações abrem; navegadores encontrados: {', '.join(n['nome'] for n in navs) or 'nenhum'}")
         j.settings.remove("limite_kb")
         j.settings.remove("limite_ativo")
         j.settings.remove("perguntar_navegador")
+        j.settings.remove("vi_ativa")
         for x in j.downloads:
             x.pausar()
         j.timer.stop()

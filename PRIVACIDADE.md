@@ -14,5 +14,13 @@ O Convergio é um acelerador de downloads que roda inteiramente no seu computado
 - O programa acessa a internet para baixar os arquivos que você escolheu e para consultar, no GitHub, se
   existe uma versão nova do Convergio e, na primeira vez que um vídeo em streaming é baixado, para obter o
   conversor FFmpeg no PyPI.
+- **Torrents:** ao baixar um torrent ou link magnet, o programa se conecta a outras pessoas que têm o mesmo
+  arquivo (rede BitTorrent, DHT e descoberta na rede local). Isso é próprio do BitTorrent: essas pessoas veem o
+  seu endereço IP enquanto o download acontece. O Convergio para de compartilhar quando o download termina.
+- **Velocidade inteligente** (só se você ligar): para medir o ping, o programa abre conexões rápidas com
+  servidores públicos de DNS (Cloudflare 1.1.1.1, Google 8.8.8.8, Quad9 9.9.9.9), sem enviar dados. Para saber
+  se há uma chamada, consulta no registro do Windows se algum programa está usando o microfone (não ouve nada);
+  para jogos, pergunta ao Windows se há um programa em tela cheia.
+- **Antivírus** (só se você ligar): o arquivo baixado é verificado pelo Microsoft Defender do próprio Windows.
 
 Contato: Lohan Lilson S. Lopes — lohanlilson@gmail.com

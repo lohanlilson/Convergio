@@ -1,11 +1,12 @@
 """Recursos extras da janela principal: configurações, navegadores, vários links, menu de contexto,
-atualizar link, aviso ao terminar, limite de velocidade e agendamento."""
+atualizar link, aviso ao terminar, limite de velocidade, velocidade inteligente, hash, antivírus e agendamento."""
 from __future__ import annotations
 
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 from PySide6.QtCore import QDateTime, Qt, QTime, QTimer, QUrl
@@ -16,7 +17,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import APP_NAME, resource, tema
+
+from . import APP_NAME, inteligente, resource, tema, verificacao
 from .motor import BAIXANDO, CATEGORIAS, CONCLUIDO, ERRO, LIMITADOR, NA_FILA, PAUSADO, fmt_bytes
 
 RE_LINKS = re.compile(r"https?://[^\s<>\"']+", re.I)
@@ -262,8 +264,119 @@ class DialogoContagem(QDialog):
         self.resta -= 1
 
 
+class DialogoHash(QDialog):
+    """Conferir a integridade: calcula SHA-256 e MD5 e compara com o hash informado pelo site."""
+
+    def __init__(self, janela, download):
+        super().__init__(janela)
+        self.d = download
+        self.setWindowTitle("Verificar integridade (hash)")
+        self.setMinimumWidth(620)
+        lay = QVBoxLayout(self)
+        concluido = download.status == CONCLUIDO
+        lay.addWidget(QLabel(f"<b>{download.nome or download.url}</b>"))
+        explica = ("Cole o hash que o site informa (SHA-256, SHA-1 ou MD5) para conferir se o arquivo chegou "
+                   "inteiro e sem alterações." if concluido else
+                   "Cole o hash que o site informa (SHA-256, SHA-1 ou MD5). Quando o download terminar, o Convergio "
+                   "confere sozinho e avisa se for diferente.")
+        lb = QLabel(explica, objectName="Muted")
+        lb.setWordWrap(True)
+        lay.addWidget(lb)
+        f = QFormLayout()
+        self.ed_esperado = QLineEdit(placeholderText="hash do site (opcional)")
+        if download.hash_esperado:
+            self.ed_esperado.setText(download.hash_esperado[1])
+        else:
+            achado = verificacao.hash_esperado(QGuiApplication.clipboard().text()[:400])
+            if achado:
+                self.ed_esperado.setText(achado[1])
+        self.ed_esperado.textChanged.connect(self._comparar)
+        f.addRow("Hash esperado:", self.ed_esperado)
+        self.lb_sha = QLineEdit(readOnly=True)
+        self.lb_md5 = QLineEdit(readOnly=True)
+        if concluido:
+            f.addRow("SHA-256:", self.lb_sha)
+            f.addRow("MD5:", self.lb_md5)
+        lay.addLayout(f)
+        self.lb_res = QLabel()
+        self.lb_res.setWordWrap(True)
+        lay.addWidget(self.lb_res)
+        linha = QHBoxLayout()
+        self.bt_copiar = QPushButton("Copiar SHA-256")
+        self.bt_copiar.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.lb_sha.text()))
+        self.bt_copiar.setVisible(concluido)
+        self.bt_copiar.setEnabled(False)
+        linha.addWidget(self.bt_copiar)
+        linha.addStretch()
+        ok = QPushButton("Fechar" if concluido else "Salvar", objectName="Primary")
+        ok.clicked.connect(self.accept)
+        linha.addWidget(ok)
+        lay.addLayout(linha)
+        self._hashes = None
+        self._parar = threading.Event()
+        self._prog = 0.0
+        if concluido:
+            if not (download.caminho and os.path.isfile(download.caminho)):
+                self.lb_res.setText("O arquivo não está mais na pasta.")
+            else:
+                self.lb_sha.setText("calculando…")
+                threading.Thread(target=self._calcular, daemon=True).start()
+                self._timer = QTimer(self, interval=200, timeout=self._mostrar)
+                self._timer.start()
+        self._comparar()
+
+    def _calcular(self):
+        try:
+            self._hashes = verificacao.calcular(self.d.caminho, ("sha256", "sha1", "md5"), self._parar,
+                                                lambda p: setattr(self, "_prog", p))
+        except (OSError, InterruptedError):
+            self._hashes = {}
+
+    def _mostrar(self):
+        if self._hashes is None:
+            self.lb_sha.setText(f"calculando… {int(self._prog * 100)}%")
+            return
+        self._timer.stop()
+        self.lb_sha.setText(self._hashes.get("sha256", "não foi possível ler o arquivo"))
+        self.lb_md5.setText(self._hashes.get("md5", ""))
+        self.bt_copiar.setEnabled(bool(self._hashes))
+        self._comparar()
+
+    def _comparar(self):
+        c = tema.atual
+        achado = verificacao.hash_esperado(self.ed_esperado.text())
+        if self.ed_esperado.text().strip() and not achado:
+            self.lb_res.setText(f"<span style='color:{c['danger']}'>Isso não parece um hash (SHA-256, SHA-1 ou MD5).</span>")
+            return
+        if not achado:
+            self.lb_res.setText("")
+            return
+        if self.d.status != CONCLUIDO:
+            self.lb_res.setText(f"{achado[0].upper()} — será conferido quando o download terminar.")
+            return
+        if not self._hashes:
+            self.lb_res.setText(f"{achado[0].upper()} — aguardando o cálculo…")
+            return
+        alg, h = achado
+        if self._hashes.get(alg) == h:
+            self.lb_res.setText(f"<b style='color:{c['ok']}'>✓ Confere ({alg.upper()}): o arquivo está íntegro.</b>")
+            self.d.verif["hash"] = "ok"
+        else:
+            self.lb_res.setText(f"<b style='color:{c['danger']}'>⚠ Não confere ({alg.upper()}).</b> O arquivo pode estar "
+                                "incompleto ou ter sido alterado. Baixe de novo, de preferência do site oficial.")
+            self.d.verif["hash"] = "diferente"
+
+    def done(self, r):
+        self._parar.set()
+        achado = verificacao.hash_esperado(self.ed_esperado.text())
+        if achado or not self.ed_esperado.text().strip():
+            self.d.hash_esperado = achado
+        super().done(r)
+
+
 class DialogoConfiguracoes(QDialog):
     ABA_NAVEGADORES = 2
+    ABA_INTELIGENTE = 4
 
     def __init__(self, janela, aba: int = 0):
         super().__init__(janela)
@@ -333,6 +446,19 @@ class DialogoConfiguracoes(QDialog):
         ll.addWidget(self.sp_limite)
         ll.addStretch()
         f.addRow(ll)
+        self.ck_av = QCheckBox("Verificar cada arquivo baixado com o antivírus do Windows (Microsoft Defender)")
+        self.ck_av.setChecked(s.value("antivirus", "false") == "true")
+        f.addRow(self.ck_av)
+        if not verificacao.antivirus_disponivel():
+            self.ck_av.setEnabled(False)
+            nota = QLabel("   Microsoft Defender não encontrado (se você usa outro antivírus, ele já verifica os "
+                          "arquivos novos sozinho).", objectName="Muted")
+            nota.setWordWrap(True)
+            f.addRow(nota)
+        else:
+            nota = QLabel("   Se encontrar ameaça, o Defender põe o arquivo em quarentena e o Convergio avisa.",
+                          objectName="Muted")
+            f.addRow(nota)
         self.abas.addTab(d, "Downloads")
 
         # ---------------- Navegadores
@@ -390,6 +516,49 @@ class DialogoConfiguracoes(QDialog):
         f.addRow(QLabel("Essa última opção vale só para a próxima vez; depois volta para \"Não fazer nada\".\n"
                         "O agendamento funciona com o Convergio aberto ou em segundo plano.", objectName="Muted"))
         self.abas.addTab(a, "Agendamento")
+
+        # ---------------- Velocidade inteligente
+        vi = QWidget()
+        v = QVBoxLayout(vi)
+        self.ck_vi = QCheckBox("Ligar a velocidade inteligente")
+        self.ck_vi.setStyleSheet("font-weight: 600;")
+        self.ck_vi.setChecked(s.value("vi_ativa", "false") == "true")
+        v.addWidget(self.ck_vi)
+        expl = QLabel("Os downloads usam a internet toda, mas diminuem sozinhos quando você precisa dela para outra "
+                      "coisa — e voltam à velocidade cheia quando passa. Desligada, nada muda.", objectName="Muted")
+        expl.setWordWrap(True)
+        v.addWidget(expl)
+        self.ck_vi_ping = QCheckBox("Quando a internet ficar lenta (o ping subir por causa do download)")
+        self.ck_vi_ping.setChecked(s.value("vi_ping", "true") != "false")
+        self.ck_vi_mic = QCheckBox("Durante chamadas (quando algum programa estiver usando o microfone)")
+        self.ck_vi_mic.setChecked(s.value("vi_chamada", "true") != "false")
+        self.ck_vi_jogo = QCheckBox("Durante jogos e programas em tela cheia")
+        self.ck_vi_jogo.setChecked(s.value("vi_jogo", "true") != "false")
+        for ck in (self.ck_vi_ping, self.ck_vi_mic, self.ck_vi_jogo):
+            v.addWidget(ck)
+        lp = QHBoxLayout()
+        lp.addWidget(QLabel("Em chamadas e jogos, usar no máximo"))
+        self.sp_vi = QSpinBox(minimum=5, maximum=90, singleStep=5, value=int(s.value("vi_porcentagem", 30)))
+        self.sp_vi.setSuffix(" %")
+        lp.addWidget(self.sp_vi)
+        lp.addWidget(QLabel("da velocidade normal"))
+        lp.addStretch()
+        v.addLayout(lp)
+        self.ck_vi_aviso = QCheckBox("Avisar (perto do relógio) quando reduzir a velocidade")
+        self.ck_vi_aviso.setChecked(s.value("vi_aviso", "true") != "false")
+        v.addWidget(self.ck_vi_aviso)
+        nota = QLabel("Para medir o ping, o Convergio só abre uma conexão rápida com servidores públicos de DNS "
+                      "(Cloudflare, Google, Quad9). Nada é enviado.", objectName="Muted")
+        nota.setWordWrap(True)
+        v.addWidget(nota)
+        v.addStretch()
+
+        def habilitar(on):
+            for w in (self.ck_vi_ping, self.ck_vi_mic, self.ck_vi_jogo, self.sp_vi, self.ck_vi_aviso):
+                w.setEnabled(on)
+        self.ck_vi.toggled.connect(habilitar)
+        habilitar(self.ck_vi.isChecked())
+        self.abas.addTab(vi, "Velocidade inteligente")
 
         linha = QHBoxLayout()
         linha.addStretch()
@@ -497,6 +666,14 @@ class DialogoConfiguracoes(QDialog):
         s.setValue("agenda_fim_ativa", b(self.ck_fim.isChecked()))
         s.setValue("agenda_fim", self.tm_fim.time().toString("HH:mm"))
         j.ao_terminar = self.cb_terminar.currentData()
+        s.setValue("antivirus", b(self.ck_av.isChecked() and self.ck_av.isEnabled()))
+        s.setValue("vi_ping", b(self.ck_vi_ping.isChecked()))
+        s.setValue("vi_chamada", b(self.ck_vi_mic.isChecked()))
+        s.setValue("vi_jogo", b(self.ck_vi_jogo.isChecked()))
+        s.setValue("vi_porcentagem", self.sp_vi.value())
+        s.setValue("vi_aviso", b(self.ck_vi_aviso.isChecked()))
+        j.act_inteligente.setChecked(self.ck_vi.isChecked())
+        j.aplicar_inteligente(self.ck_vi.isChecked())
         j._salvar_opcoes()
         self.accept()
 
@@ -514,6 +691,12 @@ class Recursos:
         self.tab.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tab.customContextMenuRequested.connect(self._menu_contexto)
         self.aplicar_limite(self.settings.value("limite_ativo", "false") == "true")
+        self.inteligente = inteligente.VelocidadeInteligente()
+        self._total_atual = 0.0
+        self._motivo_avisado = ""
+        self._vi_thread = threading.Thread(target=self._laco_inteligente, daemon=True)
+        self._vi_thread.start()
+        self.aplicar_inteligente(self.settings.value("vi_ativa", "false") == "true")
 
     # -------- configurações / limite
     def abrir_configuracoes(self, aba: int = 0):
@@ -527,6 +710,43 @@ class Recursos:
         self.act_limite.setText(f"Limitar velocidade ({fmt_bytes(kb * 1024)}/s)")
         if self.act_limite.isChecked() != ligado:
             self.act_limite.setChecked(ligado)
+
+    def aplicar_inteligente(self, ligado: bool):
+        s = self.settings
+        s.setValue("vi_ativa", "true" if ligado else "false")
+        vi = self.inteligente
+        vi.ping = s.value("vi_ping", "true") != "false"
+        vi.chamada = s.value("vi_chamada", "true") != "false"
+        vi.jogo = s.value("vi_jogo", "true") != "false"
+        vi.porcentagem = int(s.value("vi_porcentagem", 30))
+        if ligado:
+            vi.ligado = True
+        else:
+            vi.desligar()
+        if self.act_inteligente.isChecked() != ligado:
+            self.act_inteligente.setChecked(ligado)
+
+    def _laco_inteligente(self):
+        """Thread: a cada 2 s ajusta a velocidade inteligente (o ping pode demorar, por isso fora da interface)."""
+        while not getattr(self, "_encerrado", False):
+            try:
+                baixando = any(d.status == BAIXANDO for d in list(self.downloads))
+                self.inteligente.ajustar(self._total_atual, baixando)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(2)
+
+    def _avisar_inteligente(self):
+        motivo = self.inteligente.motivo if self._total_atual else ""
+        if motivo == self._motivo_avisado:
+            return
+        anterior, self._motivo_avisado = self._motivo_avisado, motivo
+        if self.settings.value("vi_aviso", "true") == "false" or not getattr(self, "tray", None):
+            return
+        if motivo in ("chamada", "jogo") or (motivo == "internet" and not anterior):
+            self.tray.showMessage(APP_NAME, self.inteligente.texto(), _icone(), 4000)
+        elif not motivo and anterior:
+            self.tray.showMessage(APP_NAME, "Velocidade dos downloads normalizada.", _icone(), 3000)
 
     def navegadores_vinculados(self) -> list[str]:
         return [x for x in str(self.settings.value("navegadores_vinculados", "")).split(",") if x]
@@ -556,10 +776,22 @@ class Recursos:
         if ev.mimeData().hasUrls() or ev.mimeData().hasText():
             ev.acceptProposedAction()
 
+    def abrir_torrent(self):
+        arqs, _ = QFileDialog.getOpenFileNames(self, "Abrir arquivo .torrent", "", "Torrent (*.torrent)")
+        for a in arqs:
+            self.adicionar(a, avisar_duplicado=False)
+
     def dropEvent(self, ev):
         md = ev.mimeData()
+        locais = [u.toLocalFile() for u in md.urls() if u.isLocalFile() and u.toLocalFile().lower().endswith(".torrent")]
+        if locais:
+            ev.acceptProposedAction()
+            for a in locais:
+                self.adicionar(a, avisar_duplicado=False)
+            return
         texto = "\n".join(u.toString() for u in md.urls()) if md.hasUrls() else md.text()
         links = [u.rstrip(".,;)") for u in RE_LINKS.findall(texto)]
+        links += re.findall(r"magnet:\?[^\s<>\"']+", texto, re.I)
         if links:
             ev.acceptProposedAction()
             self.adicionar_links(list(dict.fromkeys(links)))
@@ -578,10 +810,16 @@ class Recursos:
             m.addAction("Abrir", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(d.caminho))).setEnabled(existe)
             m.addAction("Mostrar na pasta", lambda: mostrar_na_pasta(d.caminho)).setEnabled(existe)
             m.addAction("Baixar de novo", lambda: self.adicionar(d.url, headers=d.headers_extra, avisar_duplicado=False))
+            m.addAction("Verificar integridade (hash)…", lambda: DialogoHash(self, d).exec()).setEnabled(
+                existe and os.path.isfile(d.caminho))
+            if verificacao.antivirus_disponivel():
+                m.addAction("Verificar com o antivírus", lambda: verificacao.processar(d, True)).setEnabled(
+                    existe and os.path.isfile(d.caminho))
         else:
             m.addAction("Retomar", self.retomar).setEnabled(d.status in (PAUSADO, ERRO))
             m.addAction("Pausar", self.pausar).setEnabled(d.status in (BAIXANDO, NA_FILA) or d.rodando)
-            m.addAction("Atualizar link…", self.atualizar_link)
+            m.addAction("Atualizar link…", self.atualizar_link).setEnabled(d.tipo != "torrent")
+            m.addAction("Informar hash esperado…", lambda: DialogoHash(self, d).exec())
             m.addAction("Abrir pasta", self.abrir_pasta)
         m.addSeparator()
         m.addAction("Copiar link", lambda: QGuiApplication.clipboard().setText(d.url))
@@ -622,9 +860,14 @@ class Recursos:
             recente = antes is None and time.time() - d.concluido_em < 5      # terminou antes do 1º ciclo
             if d.status == CONCLUIDO and (antes not in (None, CONCLUIDO) or recente):
                 terminou_algum = True
+                av = self.settings.value("antivirus", "false") == "true" and verificacao.antivirus_disponivel()
+                if d.hash_esperado or av:
+                    verificacao.processar(d, av)
                 if self.settings.value("aviso_concluir", "true") != "false":
                     AvisoConcluido(d).mostrar()
         self._status_anterior = {id(d): d.status for d in self.downloads}
+        self._conferir_alertas()
+        self._avisar_inteligente()
         if terminou_algum:
             self.salvar_lista()
             ativos = any(d.rodando or d.status == NA_FILA for d in self.downloads)
@@ -633,6 +876,27 @@ class Recursos:
                 if DialogoContagem(self, acao).exec():
                     self.executar_ao_terminar(acao)
         self._tick_agenda()
+
+    def _conferir_alertas(self):
+        """Avisa uma vez quando o hash não confere ou o antivírus encontrou ameaça."""
+        for d in self.downloads:
+            v = d.verif
+            if not v or v.get("avisado"):
+                continue
+            if v.get("av") == "ameaca":
+                v["avisado"] = True
+                self.salvar_lista()
+                self.tray.showMessage(APP_NAME, f"Ameaça encontrada em {d.nome}", _icone(), 8000)
+                QMessageBox.warning(self, "Ameaça encontrada",
+                                    f"O Microsoft Defender encontrou uma ameaça em:\n{d.nome}\n\n"
+                                    f"{v.get('av_detalhe', '')}\n\nO arquivo foi colocado em quarentena pelo "
+                                    "Defender. Não abra arquivos dessa origem.")
+            elif v.get("hash") == "diferente":
+                v["avisado"] = True
+                self.salvar_lista()
+                QMessageBox.warning(self, "Arquivo diferente do esperado",
+                                    f"O hash de {d.nome} não confere com o informado.\n\nO arquivo pode estar "
+                                    "incompleto ou ter sido alterado. Baixe de novo, de preferência do site oficial.")
 
     def _tick_agenda(self):
         s = self.settings
@@ -667,6 +931,8 @@ class Recursos:
         """Ações de menu criadas aqui e usadas pelos menus da janela."""
         self.act_limite = QAction("Limitar velocidade", self, checkable=True)
         self.act_limite.toggled.connect(self.aplicar_limite)
+        self.act_inteligente = QAction("Velocidade inteligente (chamadas, jogos, internet lenta)", self, checkable=True)
+        self.act_inteligente.toggled.connect(lambda v: self.aplicar_inteligente(v))
 
 
-__all__ = ["Recursos", "DialogoConfiguracoes", "AvisoConcluido", "mostrar_na_pasta", "QApplication"]
+__all__ = ["Recursos", "DialogoConfiguracoes", "DialogoHash", "AvisoConcluido", "mostrar_na_pasta", "QApplication"]

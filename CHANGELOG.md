@@ -1,5 +1,11 @@
 # Novidades do Convergio
 
+## 1.4.0
+- **Torrents e links magnet:** cole um link `magnet:`, abra um arquivo `.torrent` (Arquivo › Abrir arquivo .torrent, ou arraste para a janela) ou baixe um link de `.torrent`. Pausar e retomar funcionam como nos outros downloads, e o limite de velocidade vale também para torrents. Quando termina, o Convergio para de compartilhar. Na instalação dá para escolher abrir magnet e `.torrent` com o Convergio (vem desmarcado).
+- **Conferir integridade (hash):** botão direito num download concluído › Verificar integridade mostra o SHA-256 e o MD5 e compara com o hash que o site informa (o hash copiado já aparece preenchido). Num download em andamento, "Informar hash esperado" faz a conferência sozinha no fim. Se o servidor informar o hash, a conferência é automática. Se não conferir, o Convergio avisa.
+- **Antivírus (opcional, desligado por padrão):** em Configurações › Downloads, "Verificar cada arquivo baixado com o antivírus do Windows". O Microsoft Defender verifica o arquivo ao terminar; se achar ameaça, põe em quarentena e o Convergio avisa. Também dá para verificar um arquivo pelo botão direito.
+- **Velocidade inteligente (opcional, desligada por padrão):** em Configurações › Velocidade inteligente ou no menu Downloads. Os downloads diminuem sozinhos quando a internet fica lenta por causa deles (o ping sobe), durante chamadas (microfone em uso) e em jogos ou programas em tela cheia, e voltam à velocidade cheia quando passa. Dá para escolher quanto reduzir e se quer aviso.
+
 ## 1.3.0
 - **Captura de vídeos:** quando uma página tem vídeo, o ícone da extensão mostra um número; clique nele e em **Baixar**. Funciona com vídeos em streaming (HLS) e arquivos de vídeo diretos. O Convergio baixa os pedaços com várias conexões e junta tudo num `.mp4`.
 - Na primeira vez que um vídeo em streaming é baixado, o Convergio baixa sozinho o conversor FFmpeg (uns 40 MB, uma vez só).

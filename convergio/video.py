@@ -429,6 +429,9 @@ class DownloadHLS(Download):
 
 
 def criar_download(tipo: str | None, *a, **k) -> Download:
+    if tipo == "torrent":
+        from .torrent import DownloadTorrent
+        return DownloadTorrent(*a, **k)
     return DownloadHLS(*a, **k) if tipo == "hls" else Download(*a, **k)
 
 

@@ -103,12 +103,19 @@ class Limitador:
     """Limite de velocidade global (bytes por segundo), dividido entre todas as conexões. 0 = sem limite."""
 
     def __init__(self):
-        self.limite = 0
+        self.limite = 0               # escolhido pela pessoa
+        self.automatico = 0           # da velocidade inteligente (inteligente.py); 0 = sem redução
         self._lock = threading.Lock()
         self._livre_em = 0.0          # instante em que a próxima leitura pode acontecer
 
+    @property
+    def efetivo(self) -> int:
+        """O menor dos dois limites ligados (0 = sem limite)."""
+        ligados = [x for x in (self.limite, self.automatico) if x > 0]
+        return int(min(ligados)) if ligados else 0
+
     def consumir(self, n: int, parar: threading.Event | None = None):
-        limite = self.limite
+        limite = self.efetivo
         if limite <= 0 or n <= 0:
             return
         with self._lock:
@@ -172,6 +179,8 @@ class Download:
         self.velocidade = 0.0
         self.status = NA_FILA
         self.erro = ""
+        self.hash_esperado: tuple[str, str] | None = None   # (algoritmo, hash) do servidor ou colado pela pessoa
+        self.verif: dict = {}                                 # resultado da conferência / antivírus (verificacao.py)
         self.lock = threading.Lock()
         self._parar = threading.Event()
         self._thread: threading.Thread | None = None
@@ -266,6 +275,9 @@ class Download:
                 if not self.aceita_range:
                     cl = r.headers.get("Content-Length", "")
                     self.tamanho = int(cl) if cl.isdigit() else None
+                if not self.hash_esperado:
+                    from .verificacao import hash_do_servidor
+                    self.hash_esperado = hash_do_servidor(r.headers, parcial=r.status_code == 206)
                 if not self.nome:
                     self.nome = self._nome_arquivo(r)
                 self.nome = nome_seguro(self.nome, r.headers.get("Content-Type", ""))
@@ -395,7 +407,7 @@ class Download:
                         r.raise_for_status()
                         if self.aceita_range and r.status_code != 206:
                             raise IOError("o servidor ignorou o pedido de trecho (Range)")
-                        bloco = CHUNK if LIMITADOR.limite <= 0 else max(8192, min(CHUNK, LIMITADOR.limite // 20))
+                        bloco = CHUNK if LIMITADOR.efetivo <= 0 else max(8192, min(CHUNK, LIMITADOR.efetivo // 20))
                         for chunk in r.raw.stream(bloco, decode_content=False):
                             if self._parar.is_set():
                                 return False

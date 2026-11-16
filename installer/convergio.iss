@@ -54,6 +54,7 @@ Name: "pt"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho na Área de Trabalho"; GroupDescription: "Atalhos:"
+Name: "torrent"; Description: "Abrir links magnet e arquivos .torrent com o Convergio"; GroupDescription: "Torrents:"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -75,6 +76,17 @@ Root: HKA; Subkey: "Software\Classes\convergio"; ValueType: string; ValueName: "
 Root: HKA; Subkey: "Software\Classes\convergio"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\convergio\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
 Root: HKA; Subkey: "Software\Classes\convergio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
+
+; torrents: aparece em "Abrir com" sempre; vira o padrão só se a pessoa marcar a opção na instalação
+Root: HKA; Subkey: "Software\Classes\Convergio.Torrent"; ValueType: string; ValueName: ""; ValueData: "Torrent (Convergio)"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Convergio.Torrent\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
+Root: HKA; Subkey: "Software\Classes\Convergio.Torrent\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.torrent\OpenWithProgids"; ValueType: string; ValueName: "Convergio.Torrent"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.torrent"; ValueType: string; ValueName: ""; ValueData: "Convergio.Torrent"; Flags: uninsdeletevalue; Tasks: torrent
+Root: HKA; Subkey: "Software\Classes\magnet"; ValueType: string; ValueName: ""; ValueData: "URL:Magnet"; Flags: uninsdeletekey; Tasks: torrent
+Root: HKA; Subkey: "Software\Classes\magnet"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Tasks: torrent
+Root: HKA; Subkey: "Software\Classes\magnet\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"; Tasks: torrent
+Root: HKA; Subkey: "Software\Classes\magnet\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: torrent
 
 ; o programa grava "iniciar com o Windows" nesta chave; a desinstalação remove
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Convergio"; ValueType: none; Flags: uninsdeletevalue dontcreatekey

@@ -22,6 +22,11 @@ com servidores que limitam a velocidade de cada conexão.
 - Histórico de concluídos, subpastas por tipo de arquivo, limite de velocidade e agendamento (iniciar, pausar,
   desligar o computador ao terminar).
 - "Atualizar link" para continuar downloads cujo link expirou, aviso ao terminar e vários links de uma vez.
+- **Torrents e links magnet** (libtorrent), com pausar/retomar e limite de velocidade.
+- **Conferência de integridade** (SHA-256 / SHA-1 / MD5), automática quando o servidor ou você informa o hash.
+- **Antivírus opcional**: verificação de cada arquivo baixado com o Microsoft Defender.
+- **Velocidade inteligente opcional**: reduz os downloads quando o ping sobe, durante chamadas (microfone em
+  uso) e em jogos/tela cheia, e volta ao normal sozinha.
 - Temas claro e escuro, na mesma identidade visual do [Dispersio PDF](https://github.com/lohanlilson/DispersioPDF).
 - **Atualização automática**: o programa avisa quando sai uma versão nova e se atualiza sozinho.
 - **Captura de downloads dos navegadores** (Chrome, Edge, Brave, Opera) pela extensão em [`extensao/`](extensao),

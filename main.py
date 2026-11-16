@@ -1,6 +1,6 @@
 """Convergio — ponto de entrada.
 
-  Convergio.exe [link]                  abre o programa (e adiciona o link, se informado)
+  Convergio.exe [link]                  abre o programa (e adiciona o link, magnet ou .torrent, se informado)
   Convergio.exe --minimizado            inicia só na bandeja (usado ao iniciar com o Windows)
   Convergio.exe --selftest saida.txt    autoteste (usado na publicação)
   Convergio.exe --run-update <inst> <pid>   uso interno da atualização automática
@@ -34,7 +34,7 @@ def main():
     for a in argv[1:]:
         if a.lower().startswith("convergio:"):          # protocolo convergio:<link>
             a = unquote(a[len("convergio:"):].lstrip("/"))
-        if a.lower().startswith(("http://", "https://")):
+        if a.lower().startswith(("http://", "https://", "magnet:?")) or a.lower().endswith(".torrent"):
             links.append(a)
 
     # instância única: se já estiver aberto, entrega os links (ou só mostra a janela) e encerra
@@ -56,7 +56,7 @@ def main():
 
     from PySide6.QtWidgets import QApplication
     from convergio import APP_NAME, tema
-    from convergio.janela import RE_URL, Janela, icone_app
+    from convergio.janela import Janela, icone_app
 
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
@@ -70,8 +70,7 @@ def main():
     if "--minimizado" not in argv:
         j.show()
     for a in links:
-        if RE_URL.match(a):
-            j.adicionar(a)
+        j.adicionar(a)
     return app.exec()
 
 
