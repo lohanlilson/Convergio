@@ -245,7 +245,8 @@ class DownloadTorrent(Download):
                 self._salvar_resumo(h)
                 self.status = PAUSADO
             else:
-                h.flush_cache() if hasattr(h, "flush_cache") else None
+                self._remover(h)            # fecha os arquivos antes de dizer que terminou (Windows)
+                h = None
                 self.baixado = self.tamanho or self.baixado
                 self.concluido_em = time.time()
                 for f in (self._arq_resumo, self._arq_torrent):
@@ -262,11 +263,31 @@ class DownloadTorrent(Download):
         finally:
             self._h = None
             if h is not None:
-                try:
-                    with _lock:
-                        sessao().remove_torrent(h)      # mantém os arquivos; para de compartilhar
-                except Exception:  # noqa: BLE001
-                    pass
+                self._remover(h)
+
+    @staticmethod
+    def _remover(h, espera: float = 10.0):
+        """Tira o torrent da sessão (mantém os arquivos; para de compartilhar) e espera os arquivos fecharem."""
+        lt = _biblioteca()
+        try:
+            with _lock:
+                sessao().remove_torrent(h)
+        except Exception:  # noqa: BLE001
+            return
+        fim = time.monotonic() + espera
+        while time.monotonic() < fim:
+            with _lock:
+                alertas = sessao().pop_alerts()
+            for a in alertas:
+                if isinstance(a, lt.save_resume_data_alert):
+                    try:
+                        _resumos[str(a.handle.info_hash())] = lt.write_resume_data_buf(a.params)
+                    except Exception:  # noqa: BLE001
+                        pass
+            if not h.is_valid():
+                time.sleep(0.3)          # a libtorrent fecha os arquivos logo depois de invalidar
+                return
+            time.sleep(0.1)
 
     def apagar_parciais(self):
         """Remove o que foi baixado de um torrent não concluído (arquivo ou pasta) e os dados de retomada."""

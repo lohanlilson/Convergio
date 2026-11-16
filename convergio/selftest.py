@@ -364,9 +364,17 @@ def testar_torrent(log):
             fim = time.time() + 60
             while d.status != CONCLUIDO and time.time() < fim and d.status != "Erro":
                 time.sleep(0.2)
-            ok = d.status == CONCLUIDO and open(d.caminho, "rb").read() == dados
+            lido = b""
+            fim = time.time() + 10
+            while d.status == CONCLUIDO and time.time() < fim:
+                lido = open(d.caminho, "rb").read() if d.caminho and os.path.isfile(d.caminho) else b""
+                if lido == dados:
+                    break
+                time.sleep(0.5)
+            ok = d.status == CONCLUIDO and lido == dados
             falhas += not ok
-            log(f"{'OK ' if ok else 'ERRO'} torrent por {nome}: {d.status} {d.erro}")
+            log(f"{'OK ' if ok else 'ERRO'} torrent por {nome}: {d.status} {d.erro}"
+                + ("" if ok else f" (arquivo {d.caminho}: {len(lido)} de {len(dados)} bytes)"))
         ok = torrent.eh_torrent("magnet:?xt=urn:btih:abc") and torrent.eh_torrent("https://x.org/a.torrent?k=1") \
             and not torrent.eh_torrent("https://x.org/a.zip")
         falhas += not ok
