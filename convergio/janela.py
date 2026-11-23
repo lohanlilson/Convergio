@@ -147,9 +147,42 @@ class DialogoNovoDownload(QDialog):
         self.accept()
 
     def mostrar(self):
-        self.show()
-        self.raise_()
-        self.activateWindow()
+        trazer_para_frente(self)
+
+
+def trazer_para_frente(w):
+    """Põe a janela na frente mesmo quando outro programa (o navegador) está em foco.
+
+    O Windows não deixa um programa em segundo plano roubar o foco; sem isto, a janela do download nascia
+    atrás do navegador e parecia que nada tinha acontecido."""
+    w.show()
+    if w.isMinimized():
+        w.showNormal()
+    w.raise_()
+    w.activateWindow()
+    if sys.platform != "win32":
+        return
+    import ctypes
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    hwnd = int(w.winId())
+    fg = u.GetForegroundWindow()
+    if fg == hwnd:
+        return
+    t_fg = u.GetWindowThreadProcessId(fg, None)
+    t_eu = k.GetCurrentThreadId()
+    u.keybd_event(0x12, 0, 0, 0)          # Alt (libera o SetForegroundWindow)
+    u.keybd_event(0x12, 0, 2, 0)
+    ligado = t_fg and t_fg != t_eu and u.AttachThreadInput(t_eu, t_fg, True)
+    try:
+        u.ShowWindow(hwnd, 9)             # SW_RESTORE
+        u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x3 | 0x40)   # sempre na frente por um instante
+        u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x3 | 0x40)
+        u.BringWindowToTop(hwnd)
+        u.SetForegroundWindow(hwnd)
+        u.SetActiveWindow(hwnd)
+    finally:
+        if ligado:
+            u.AttachThreadInput(t_eu, t_fg, False)
 
 
 def headers_do_pedido(info: dict) -> dict:
@@ -791,6 +824,30 @@ class Janela(QMainWindow, Recursos):
         dlg = DialogoNovoDownload(self, info)
         self._dialogos = [x for x in getattr(self, "_dialogos", []) if x.isVisible()] + [dlg]
         dlg.mostrar()
+        # se mesmo assim a janela não veio para frente, avisa perto do relógio (clicar no aviso abre)
+        QTimer.singleShot(1200, lambda d=dlg: self._conferir_frente(d))
+
+    def _aviso_clicado(self):
+        dlg = getattr(self, "_dlg_pendente", None)
+        self._dlg_pendente = None
+        try:
+            if dlg is not None and dlg.isVisible():
+                trazer_para_frente(dlg)
+                return
+        except RuntimeError:
+            pass
+        self.mostrar_janela()
+
+    def _conferir_frente(self, dlg):
+        try:
+            if dlg.isVisible() and not dlg.isActiveWindow():
+                self._dlg_pendente = dlg
+                self.tray.showMessage(APP_NAME, "Download do navegador esperando você confirmar — clique aqui.",
+                                      icone_app(), 8000)
+                dlg.raise_()
+                QApplication.alert(dlg, 0)
+        except RuntimeError:
+            pass
 
     def receber_abrir(self, links: list):
         self.mostrar_janela()
@@ -800,8 +857,7 @@ class Janela(QMainWindow, Recursos):
 
     def mostrar_janela(self):
         self.showNormal()
-        self.raise_()
-        self.activateWindow()
+        trazer_para_frente(self)
 
     def mostrar_integracao(self):
         self.mostrar_janela()
@@ -840,6 +896,7 @@ class Janela(QMainWindow, Recursos):
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(
             lambda motivo: self.mostrar_janela() if motivo in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
+        self.tray.messageClicked.connect(self._aviso_clicado)
         self.tray.show()
 
     # ------------------------------------------------------------ iniciar com o Windows

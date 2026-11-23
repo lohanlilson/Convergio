@@ -1,5 +1,8 @@
 # Novidades do Convergio
 
+## 1.4.1
+- Corrigido: ao clicar para baixar no navegador, a janela do Convergio às vezes abria escondida atrás do navegador e parecia que nada tinha acontecido. Agora ela vem para a frente; se o Windows não deixar, aparece um aviso perto do relógio que abre a janela.
+
 ## 1.4.0
 - **Torrents e links magnet:** cole um link `magnet:`, abra um arquivo `.torrent` (Arquivo › Abrir arquivo .torrent, ou arraste para a janela) ou baixe um link de `.torrent`. Pausar e retomar funcionam como nos outros downloads, e o limite de velocidade vale também para torrents. Quando termina, o Convergio para de compartilhar. Na instalação dá para escolher abrir magnet e `.torrent` com o Convergio (vem desmarcado).
 - **Conferir integridade (hash):** botão direito num download concluído › Verificar integridade mostra o SHA-256 e o MD5 e compara com o hash que o site informa (o hash copiado já aparece preenchido). Num download em andamento, "Informar hash esperado" faz a conferência sozinha no fim. Se o servidor informar o hash, a conferência é automática. Se não conferir, o Convergio avisa.
